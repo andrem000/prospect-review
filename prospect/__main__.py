@@ -16,6 +16,10 @@ def main(argv=None):
     sub.add_parser('init')
     demo = sub.add_parser('demo', help='Run bundled fictional data with reproducible checks; no network')
     demo.add_argument('--out', default='demo-output', help='A new directory; existing paths are refused')
+    app = sub.add_parser('app', help='Open the local browser app; data stays in your workspace')
+    app.add_argument('--workspace', default='prospect-review-workspace', help='Local directory for database, source files and exports')
+    app.add_argument('--port', type=int, default=0, help='Loopback port; 0 chooses an available port')
+    app.add_argument('--no-browser', action='store_true', help='Print the local URL without opening a browser')
     imp = sub.add_parser('import')
     imp.add_argument('file')
     imp.add_argument('--adapter', choices=('canonical', 'overture', 'osm'), default='canonical')
@@ -57,6 +61,9 @@ def main(argv=None):
     sub.add_parser('stats')
     a = p.parse_args(argv)
     try:
+        if a.command == 'app':
+            from .app import run
+            return run(a.workspace, port=a.port, open_browser=not a.no_browser) or 0
         if a.command == 'demo':
             from .demo import run
             run(a.out)

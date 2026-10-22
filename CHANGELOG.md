@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 — Unreleased
+
+- Add a bundled local browser app launched with `prospect-review app`, with no third-party runtime dependencies or external assets.
+- Preview and map listing files before an explicit import, preserving source permissions, notices and transformation provenance.
+- Search and filter a review queue, inspect evidence and history, and save dated decisions using the existing review engine.
+- Export selected or filtered records as a ZIP containing CSV/JSON and its provenance sidecar; revisit previous exports.
+- Persist settings, exclusions and progress inside a local workspace. Include a one-click fictional demo for an empty workspace.
+
 ## 0.1.1 — 2026-10-22
 
 - Honor `freshness_days` when deciding whether recorded activity evidence is current, including a zero-day window.

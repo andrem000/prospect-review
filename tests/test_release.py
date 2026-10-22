@@ -141,4 +141,4 @@ class DistributionBehaviorTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-m', 'prospect', '--version'], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), 'Prospect Review ' + __version__)
-        self.assertEqual(__version__, '0.1.1')
+        self.assertEqual(__version__, '0.2.0')

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prospect-review"
-version = "0.1.1"
-description = "Offline, evidence-preserving review of US service-business listings"
+version = "0.2.0"
+description = "Local app and CLI for evidence-preserving review of US business listings"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -34,4 +34,4 @@ include = ["prospect*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-prospect = ["data/*.csv", "data/*.json"]
+prospect = ["data/*.csv", "data/*.json", "web/*.html", "web/*.css", "web/*.js", "web/*.svg"]

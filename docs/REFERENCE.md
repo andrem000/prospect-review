@@ -40,6 +40,8 @@ Saved Overture objects/GeoJSON and OSM/Overpass objects use `--adapter overture`
 
 ## Commands
 
+`python -m prospect app` opens the local browser app. Use `--workspace <directory>` to resume a chosen workspace, `--port <number>` to select a loopback port, or `--no-browser` to print the URL without opening it. This command uses its workspace database; global `--db` belongs to the existing CLI commands below. See [the app guide](LOCAL-APP.md).
+
 Create the database's parent directory first. Ordinary CLI commands can create the SQLite file when it does not exist, so check the `--db` path carefully.
 
 | Command | Purpose |

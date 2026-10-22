@@ -55,6 +55,8 @@ def main():
         assert run(cli, '--version').strip() == expected_version
         assert run(alias, '--version').strip() == expected_version
         assert 'demo' in run(cli, '--help')
+        assert '--workspace' in run(cli, 'app', '--help')
+        app_check = json.loads(run(python, '-I', '-c', Path(__file__).with_name('verify_app.py').read_text(encoding='utf-8')))
         summary = json.loads(run(cli, 'demo', '--out', 'installed-demo'))
         report_path = outside / 'installed-demo' / 'report.json'
         report = json.loads(report_path.read_text(encoding='utf-8'))
@@ -109,7 +111,7 @@ def main():
                           'demo_checks': summary['checks_passed'], 'existing_demo_preserved': True,
                           'documented_review_example': True, 'configured_freshness_changes_qualification': True,
                           'partial_correction_preserves_decisions_and_activity_date': True,
-                          'runtime_dependencies': 0}, indent=2))
+                          'runtime_dependencies': 0, **app_check}, indent=2))
 
 
 if __name__ == '__main__':

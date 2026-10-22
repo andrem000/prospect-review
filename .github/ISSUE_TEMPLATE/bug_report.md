@@ -9,11 +9,12 @@ assignees: ''
 **What happened, and what did you expect?**
 
 **Reproduction**
-Provide the smallest fictional input and the exact command.
+Provide the smallest fictional input and the exact command or app steps.
 
 **Environment**
 - OS:
 - Python version:
+- Browser and version (for the local app):
 - Prospect Review version (`prospect-review --version`):
 
 **Output**

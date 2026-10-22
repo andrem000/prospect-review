@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="session-token" content="__SESSION_TOKEN__">
+  <meta name="color-scheme" content="light">
+  <title>Prospect Review · Local workspace</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to workspace</a>
+  <aside class="sidebar">
+    <a class="brand" href="#queue" aria-label="Prospect Review home"><span class="brand-mark" aria-hidden="true">p<span>r</span></span><span>Prospect<br><strong>Review</strong></span></a>
+    <p class="sidebar-label">WORKSPACE</p>
+    <nav aria-label="Main navigation">
+      <button data-view="queue" class="nav active"><span aria-hidden="true">▤</span> Review queue</button>
+      <button data-view="import" class="nav"><span aria-hidden="true">↥</span> Import data</button>
+      <button data-view="exports" class="nav"><span aria-hidden="true">↧</span> Exports</button>
+      <button data-view="settings" class="nav"><span aria-hidden="true">⚙</span> Settings</button>
+    </nav>
+    <div class="local-status"><span class="status-dot"></span> Local workspace<p>Your data stays on this machine.</p><small id="version">Prospect Review</small></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span id="workspace-name">Your local workspace</span><span class="local-chip">● LOCAL ONLY</span></header>
+    <main id="main" tabindex="-1"><div id="notice" role="status" aria-live="polite" hidden></div><div id="content"><p class="loading">Opening your workspace…</p></div></main>
+    <footer>Evidence first. Every decision stays traceable. <span>No outreach or sending tools.</span></footer>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title">Keep your unsaved work?</h2><p>This review has unsaved edits. You can return to it or discard the changes.</p><div class="actions"><button id="keep-editing" class="primary">Keep editing</button><button id="discard-editing" class="danger">Discard changes</button></div></dialog>
+</body>
+</html>

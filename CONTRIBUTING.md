@@ -11,6 +11,8 @@ python demo.py --out contribution-demo
 
 Use a fresh demo output directory. For installed-command changes, also create a virtual environment, run `python -m pip install .`, change to a directory outside the checkout and run `prospect-review demo --out <new-directory>`. Do not substitute an editable installation for that packaging check.
 
+For app changes, run `python -m prospect app --workspace <new-directory>` and exercise import, review, filtering and export in a browser with fictional data. Check keyboard navigation and a narrow window. Build a wheel and run `python scripts/verify_install.py --wheel-dir <wheel-directory>` to verify the packaged app and CLI from an isolated installation. Do not commit test workspaces or generated exports.
+
 ## Report a problem
 
 Open an [issue](https://github.com/andrem000/prospect-review/issues) with the Python version, operating system, exact command, expected result and actual result. Include the smallest synthetic input that reproduces the problem. Replace real names, addresses, contact details, source credentials and private paths before posting. Do not attach a real database, exclusion list or customer export.

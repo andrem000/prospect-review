@@ -1,12 +1,30 @@
 # Prospect Review
 
-**An offline, explainable review queue for business-listing files.**
+**A local app for reviewing business-listing files, with evidence you can follow.**
 
 Prospect Review helps you inspect a local dataset you already have permission to use. It normalizes records, merges strong identity matches, distinguishes website signals, applies supplied exclusions and records human review decisions. Each score comes with reasons, and exports retain source provenance.
 
 Built for modest US service-business datasets. Python **3.10+**, standard library only, **zero runtime dependencies**. No accounts, API keys, downloads or outreach are needed to run it.
 
-## Run the fictional demo
+## Open the local app
+
+```sh
+git clone https://github.com/andrem000/prospect-review.git
+cd prospect-review
+python -m prospect app
+```
+
+Use `python3` if that is your Python 3 command. Your browser opens the app; keep the terminal running and press **Ctrl+C** there to stop it. No installation is needed. Choose **Try fictional demo** for a safe first look, or import a file you have permission to use.
+
+The app previews and maps CSV/JSON/JSONL files, records source permissions, shows a searchable review queue and evidence history, and exports selected or filtered records with their provenance in a ZIP. Reviews, settings and exports persist in `prospect-review-workspace/`. Launch from the same directory to resume, or use `--workspace /path/to/workspace` to choose another workspace.
+
+Everything runs on your machine, with no accounts, external assets or runtime dependencies. The server listens only on `127.0.0.1`; it is intended for a single local user. [The local app guide](docs/LOCAL-APP.md) covers the complete workflow, backups and limits. The existing CLI remains available.
+
+![Prospect Review local app showing its fictional demo queue and evidence panel](docs/images/local-app.png)
+
+*Fictional demo records; no real businesses were researched or contacted.*
+
+## Run the reproducible CLI demo
 
 ```sh
 git clone https://github.com/andrem000/prospect-review.git
@@ -43,6 +61,7 @@ Activate it with `source .venv/bin/activate` on macOS/Linux or `.venv\Scripts\Ac
 ```sh
 python -m pip install .
 prospect-review demo --out installed-demo-output
+prospect-review app
 ```
 
 Installation may fetch build tooling. The installed demo bundles its fixtures and runs outside the checkout. The distribution is `prospect-review`; the Python module is `prospect`. `prospect` is also a command alias. This project is installed from source; the commands above do not assume a PyPI release.
