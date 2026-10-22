@@ -22,6 +22,8 @@ The **Changes** inbox compares a reimport before confirmation, shows meaningful 
 
 The Investigation desk separates the effective saved answer and its evidence basis from your unfinished draft. It shows the latest imported observation for each source identity, with earlier observations in expandable history. Opening a Changes reason brings its before/after evidence into the relevant question; retained historical signals explain why an older website or contact detail can still affect screening.
 
+The **Unfinished work** view helps you find saved question drafts after an interruption. Resume a draft, compare its original review context with current saved answers, and deliberately keep your input, use current work or defer each question. Saving one question preserves the other unfinished answers and their context; source-evidence acceptance remains separate.
+
 The app runs on your machine, with no accounts, external interface assets or runtime dependencies. Optional research assistance checks one public website link you supply, only when you request it. It shows captured evidence and matching or conflicting business details; you decide whether to use a proposed answer in a draft. You can also analyze a saved page offline. No automatic review or outreach follows.
 
 The server listens only on `127.0.0.1`; it is intended for a single local user. [The local app guide](docs/LOCAL-APP.md) covers the complete workflow, research limits and backups. The existing CLI remains available.

@@ -189,6 +189,54 @@ def verify():
             assert desk['business']['review'] == prior['review']
             assert 'website_present' in desk['business']['excluded_reasons']
             assert persisted_review_state() == before_read
+            # Unfinished work is discoverable without changing persisted state.
+            work = request('/api/drafts?limit=1')
+            assert work['total'] >= 1
+            listed = next(item for item in request('/api/drafts')['items'] if item['id'] == record['id'])
+            assert 'website' in listed['questions'] and listed['source_changed']
+            assert persisted_review_state() == before_read
+            fit = {'ownership': 'unknown', 'residential': 'unknown', 'service_fit': 'unknown',
+                   'delivery': 'unknown', 'notes': 'SIMULATED retained unfinished fit sentinel',
+                   'evidence_url': 'https://example.com/unfinished-fit', 'evidence_observed_at': '2026-10-15'}
+            edited = dict(desk['draft'], questions={**desk['draft']['questions'], 'fit': fit})
+            saved = request(base + '/draft', {'review_revision': desk['review_revision'],
+                'draft_revision': desk['draft_revision'], 'source_revision': desk['draft_source_revision'], 'draft': edited})
+            request(base + '/review', {'changes': {'ownership': 'independent',
+                'evidence_url': 'https://example.com/later-correction', 'notes': 'SIMULATED later saved correction'},
+                'review_revision': saved['review_revision'], 'source_revision': desk['source_revision']})
+            changed = request(base + '/investigation')
+            assert changed['draft_conflicts']['website']['changed']
+            assert changed['draft_conflicts']['fit']['changed']
+            old_fit_revision = changed['draft_review_revisions']['fit']
+            before_resolution_reviews = request(base)['review_history_count']
+            resolved = request(base + '/draft', {'review_revision': changed['review_revision'],
+                'draft_revision': changed['draft_revision'], 'source_revision': changed['draft_source_revision'],
+                'draft': changed['draft'], 'resolve_review_revision': changed['review_revision'],
+                'resolve_questions': {'website': 'keep'}})
+            assert not resolved['draft_conflicts']['website']['changed']
+            assert resolved['draft_conflicts']['fit']['changed'] and resolved['source_changed']
+            assert request(base)['review_history_count'] == before_resolution_reviews
+            # Accepting source context is separate and cannot resolve fit's review baseline.
+            accepted_source = request(base + '/draft', {'review_revision': resolved['review_revision'],
+                'draft_revision': resolved['draft_revision'], 'source_revision': resolved['source_revision'],
+                'draft': resolved['draft']})
+            assert not accepted_source['source_changed'] and accepted_source['draft_conflicts']['fit']['changed']
+            partial_payload = {'review_revision': accepted_source['review_revision'],
+                'draft_revision': accepted_source['draft_revision'], 'source_revision': accepted_source['source_revision'],
+                'request_id': 'installed-partial-resume', 'questions': {'website': accepted_source['draft']['questions']['website']}}
+            partial = request(base + '/investigation', partial_payload)
+            assert request(base + '/investigation', partial_payload) == partial
+            remaining = request(base + '/investigation')
+            assert remaining['draft']['questions'] == {'fit': fit}
+            assert remaining['draft_review_revisions']['fit'] == old_fit_revision
+            assert remaining['draft_conflicts']['fit']['changed']
+            server.shutdown(); server.server_close(); thread.join(timeout=10)
+            server = create_server(workspace, port=0)
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            token = server.app.token
+            resumed = request(base + '/investigation')
+            assert resumed['draft']['questions'] == {'fit': fit} and resumed['review_changed']
+            assert next(item for item in request('/api/drafts')['items'] if item['id'] == record['id'])['questions'] == ['fit']
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -201,7 +249,10 @@ def verify():
                     'installed_reimport_preserves_review_and_draft': True,
                     'installed_evidence_desk_read_model': True,
                     'installed_evidence_get_preserves_reviews_drafts_triage': True,
-                    'installed_latest_import_and_retained_signal_explanation': True}
+                    'installed_latest_import_and_retained_signal_explanation': True,
+                    'installed_unfinished_worklist_read_only': True,
+                    'installed_question_resolution_keeps_other_contexts': True,
+                    'installed_partial_draft_restart': True}
         finally:
             server.shutdown()
             server.server_close()

@@ -31,15 +31,59 @@
     locked.forEach(node=>{node.disabled=true;});
     return persistDraft().then(()=>{resolveDeskNotice('Draft saved locally.');resolveResearchNotice('Draft saved locally.');return fn();}).catch(showDeskError).finally(()=>{S.navigating=false;locked.forEach(node=>{node.disabled=false;});});
     return;
-  } if(S.reviewSaving){notice('Your review is saving. Please wait before changing views.');return;}if(!S.dirty){fn();return;} pendingNavigation=fn; $('#confirm-dialog').showModal(); }
+  } if(S.reviewSaving){notice('Your review is saving. Please wait before changing views.');return;}if(!S.dirty){fn();return;} pendingNavigation=fn;$('#confirm-title').textContent='Keep your unsaved work?';$('#confirm-dialog p').textContent='This review has unsaved edits. You can return to it or discard the changes.';$('#discard-editing').textContent='Discard changes'; $('#confirm-dialog').showModal(); }
   $('#keep-editing').addEventListener('click',()=>{$('#confirm-dialog').close();pendingNavigation=null;});
   $('#discard-editing').addEventListener('click',()=>{$('#confirm-dialog').close();S.dirty=false;S.advancedDirty=false;resolveResearchNotice('Advanced review edits discarded.');const fn=pendingNavigation;pendingNavigation=null;if(fn)fn();});
   window.addEventListener('beforeunload',e=>{if(S.dirty){e.preventDefault();e.returnValue='';}});
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>guard(()=>navigate(b.dataset.view))));
   async function state() {S.state=await api('/api/state');$('#version').textContent=`Version ${S.state.version}`;$('#workspace-name').textContent=S.state.workspace||'Local workspace';}
-  function navigate(view) { S.selectedChange=null; S.returnToChanges=false; S.view=view;detailSerial++;S.detail=null;S.investigation=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
-  function render() {content.replaceChildren(); if(!S.state)return; if(S.view==='queue')renderQueue();if(S.view==='import')renderImport();if(S.view==='exports')renderExports();if(S.view==='settings')renderSettings();if(S.view==='changes')renderChanges();}
+  function navigate(view) { S.selectedChange=null; S.returnToChanges=false; S.returnToDrafts=false; S.view=view;detailSerial++;S.detail=null;S.investigation=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
+  function render() {content.replaceChildren(); if(!S.state)return; if(S.view==='queue')renderQueue();if(S.view==='unfinished')renderUnfinished();if(S.view==='import')renderImport();if(S.view==='exports')renderExports();if(S.view==='settings')renderSettings();if(S.view==='changes')renderChanges();}
   function stats() {const box=el('div','stats');[['total','Businesses'],['candidates','Candidates'],['reviewed','Reviewed'],['qualified','Qualified'],['excluded','Excluded']].forEach(([key,label])=>append(box,append(el('div',`stat ${key==='candidates'?'featured':''}`),el('strong','',S.state.counts[key]??0),el('span','',label))));return box;}
+  const draftsState={q:'',offset:0,limit:25,generation:0};
+  function renderUnfinished() {
+    append(content,heading('Unfinished work','Resume saved question edits. Opening work does not change a decision.'));
+    const search=input('search',draftsState.q);search.placeholder='Search business name, city or state';
+    const results=el('div','unfinished-results');results.setAttribute('aria-live','polite');
+    search.addEventListener('input',()=>{draftsState.q=search.value;draftsState.offset=0;clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadDrafts(results),250);});
+    append(content,panel('',field('Search unfinished work',search)),results);
+    loadDrafts(results);
+  }
+  async function loadDrafts(target) {
+    const generation=++draftsState.generation;
+    target.replaceChildren(el('p','small','Loading unfinished work…'));
+    try {
+      const query=new URLSearchParams({q:draftsState.q,offset:draftsState.offset,limit:draftsState.limit});
+      const data=await api('/api/drafts?'+query);
+      if(generation!==draftsState.generation||S.view!=='unfinished')return;
+      if(data.total && draftsState.offset>=data.total){draftsState.offset=Math.floor((data.total-1)/draftsState.limit)*draftsState.limit;return loadDrafts(target);}
+      if(!data.total)draftsState.offset=0;
+      target.replaceChildren(el('p','worklist-total',`${data.total} matching unfinished ${data.total===1?'business':'businesses'} · saved question edits only`));
+      const items=data.items||[];
+      const count=test=>items.filter(test).length;
+      append(target,el('p','small',`On this page: ${items.length} drafts · ${count(i=>i.review_changed)} saved-review context changed · ${count(i=>i.review_context_unknown)} unknown review context · ${count(i=>i.source_changed)} source changed · ${count(i=>!i.can_review)} read-only`));
+      if(!items.length)append(target,panel('',el('p','callout','No unfinished question edits match this search. Navigation-only drafts are not included.')));
+      for(const item of items){
+        const body=append(el('div','unfinished-card'),el('p','small',[item.city,item.state].filter(Boolean).join(', ')),el('p','',`Unfinished: ${(item.questions||[]).map(q=>questionLabels[q]||human(q)).join(' · ')}`));
+        const tags=el('div','tags');
+        if(item.review_context_unknown)append(tags,el('span','pill warning','Review context unknown'));
+        else if(item.review_changed)append(tags,el('span','pill warning','Saved-review context changed'));
+        if(item.source_changed)append(tags,el('span','pill warning','Source evidence changed'));
+        if(!item.can_review)append(tags,el('span','pill danger','Contact exclusion · read-only'));
+        if(!item.review_changed&&!item.source_changed)append(tags,el('span','pill muted','Draft saved locally'));
+        append(body,tags,button(item.can_review?'Resume unfinished work':'Inspect unfinished work',()=>guard(()=>resumeDraft(item)),'primary'));
+        append(target,panel(item.name,body));
+      }
+      const previous=button('← Previous',()=>{draftsState.offset=Math.max(0,draftsState.offset-draftsState.limit);loadDrafts(target);});
+      const next=button('Next →',()=>{draftsState.offset+=draftsState.limit;loadDrafts(target);});
+      previous.disabled=draftsState.offset===0;next.disabled=draftsState.offset+draftsState.limit>=data.total;
+      append(target,append(el('div','table-footer'),el('span','small',items.length?`${draftsState.offset+1}–${draftsState.offset+items.length} of ${data.total}`:'0 results'),append(el('div','actions'),previous,next)));
+    }catch(error){if(generation===draftsState.generation&&S.view==='unfinished')target.replaceChildren(el('p','inline-error',error.message),button('Retry loading unfinished work',()=>loadDrafts(target)));}
+  }
+  async function resumeDraft(item) {
+    S.view='queue';S.returnToDrafts=true;S.returnToChanges=false;
+    await openDetail(item.id,(item.questions||[]).find(q=>questionOrder.includes(q)));
+  }
   function queueFilterSummary(total) {
     const filters=[human(S.filters.queue)];
     for(const key of ['q','state','trade','website'])if(S.filters[key])filters.push(key==='q'?'“'+S.filters[key]+'”':human(S.filters[key]));
@@ -313,7 +357,7 @@
     S.investigation = {
       ...data, source_revision:data.draft ? (data.draft_source_revision ?? data.source_revision) : data.source_revision, current_source_revision:data.source_revision, mode:data.draft?.mode || 'workspace', step:data.draft?.step || 0,
       edits:copy(data.draft?.questions || {}), sequence:0, savedSequence:0,
-      saving:null, error:null, conflict:Boolean(data.review_changed), summary:false, request:null
+      saving:null, error:null, conflict:false, summary:false, request:null
     };
     S.dirty=false;
     S.advancedDirty=false;
@@ -321,6 +365,15 @@
 
   function draftPayload(inv) {
     return {mode:inv.mode, step:inv.step, questions:copy(inv.edits)};
+  }
+  function questionConflict(inv,key) {
+    const context=inv.draft_conflicts?.[key];
+    return context?Boolean(context.changed||context.unknown):Boolean(inv.review_changed&&!inv.draft_conflicts);
+  }
+  function updateDraftContext(inv,saved) {
+    for(const key of ['draft_review_revision','draft_review_revisions','draft_conflicts','review_changed','source_changed'])if(key in saved)inv[key]=saved[key];
+    if('source_revision' in saved)inv.current_source_revision=saved.source_revision;
+    if('draft_source_revision' in saved)inv.source_revision=saved.draft_source_revision??saved.source_revision;
   }
 
   function draftStatus() {
@@ -354,13 +407,10 @@
         const payload=draftPayload(inv);
         try {
           const saved=await api(`/api/businesses/${id}/draft`,{
-            review_revision:inv.review_revision, draft_revision:inv.draft_revision, source_revision:inv.source_revision, draft:payload,
-            ...(inv.resolve_review_revision!==undefined?{resolve_review_revision:inv.resolve_review_revision}:{})
+            review_revision:inv.review_revision, draft_revision:inv.draft_revision, source_revision:inv.source_revision, draft:payload
           });
           Object.assign(inv,{review_revision:saved.review_revision,draft_revision:saved.draft_revision,draft:saved.draft,savedSequence:sequence,error:null,source_changed:saved.source_changed??inv.source_changed,current_source_revision:saved.source_revision??inv.current_source_revision});
-          inv.draft_review_revision=saved.draft_review_revision;
-          inv.review_changed=saved.review_changed??inv.review_changed;
-          delete inv.resolve_review_revision;
+          updateDraftContext(inv,saved);
           S.dirty=inv.sequence!==inv.savedSequence || Boolean(S.advancedDirty);
         } catch(error) {
           inv.error=error.message;
@@ -394,15 +444,21 @@
         try {
           const latest=await deskSnapshot(S.detail.id);
           if(latest.source_revision!==undefined&&latest.source_revision!==inv.source_revision&&latest.review_revision===inv.review_revision&&latest.draft_revision===inv.draft_revision){S.detail=latest.business;refreshEvidenceModel(inv,latest);inv.source_changed=true;inv.current_source_revision=latest.source_revision;inv.conflict=false;inv.error=null;inv.request=null;render();focusDesk();return;}
-          box.replaceChildren(el('p','callout warning','Compare before replacing the newer unfinished draft. No answers have been submitted.'),jsonDetails('Newer saved questions',latest.questions),jsonDetails('Newer unfinished draft',latest.draft),jsonDetails('Your retained answers',inv.edits));
+          box.replaceChildren(el('p','callout warning','Compare before replacing unfinished input. No answers have been submitted.'));
+          for(const key of questionOrder.filter(q=>inv.edits[q]||latest.draft?.questions?.[q]))append(box,el('h4','',questionLabels[key]),append(el('div','comparison-grid'),comparisonCard('Current saved answer',key,latest.saved_answers?.[key]),comparisonCard('Saved unfinished input',key,latest.draft?.questions?.[key],true),comparisonCard('Your retained input',key,inv.edits[key],true)));
           append(box,button('Keep my answers as the draft',async()=>{
             S.detail=latest.business;inv.review_revision=latest.review_revision;inv.draft_revision=latest.draft_revision;
             inv.source_changed=latest.source_revision!==inv.source_revision;inv.current_source_revision=latest.source_revision;
             refreshEvidenceModel(inv,latest);
-            inv.resolve_review_revision=latest.review_revision;inv.review_changed=false;
+            // Updating transport tokens preserves each question's durable
+            // baseline. Resolution belongs to its visible comparison controls.
+            inv.draft_conflicts=latest.draft_conflicts;inv.review_changed=latest.review_changed;
             inv.conflict=false;inv.error=null;inv.sequence++;inv.request=null;
             try {await persistDraft();resolveDeskNotice('Conflict resolved. Your answers are saved as the local draft.');render();focusDesk();}catch(e){showDeskError(e);}
-          }),button('Use newer saved work',()=>{S.detail=latest.business;setupInvestigation(latest);resolveDeskNotice('Conflict resolved. The newer saved work is loaded.');render();focusDesk();}));
+          }),button('Use newer saved work',()=>{
+            pendingNavigation=()=>{if(S.investigation!==inv)return;S.detail=latest.business;setupInvestigation(latest);resolveDeskNotice('The saved draft is loaded. Review context is shown for each question.');render();focusDesk();};
+            $('#confirm-title').textContent='Replace your local unfinished input?';$('#confirm-dialog p').textContent='The saved draft shown in this comparison will replace your local question edits. Saved review history remains unchanged.';$('#discard-editing').textContent='Replace local input with saved draft';$('#confirm-dialog').showModal();
+          }));
         }catch(e){fail(e);}
       }));
     } else append(box,button('Retry saving draft',async()=>{
@@ -431,6 +487,15 @@
     const inv=S.investigation;
     return copy(inv.edits[key] || inv.questions[key] || {});
   }
+  function discardQuestion(key,advance=false) {
+    const discard=()=>changeDesk(i=>{delete i.edits[key];if(advance){if(i.step===3)i.summary=true;else i.step++;}});
+    if(!S.investigation.edits[key])return discard();
+    pendingNavigation=discard;
+    $('#confirm-title').textContent=`Discard ${questionLabels[key].toLowerCase()} draft edits?`;
+    $('#confirm-dialog p').textContent='Only this question’s unfinished edits will be removed. Other draft questions and saved review history are retained.';
+    $('#discard-editing').textContent='Discard this question’s edits';
+    $('#confirm-dialog').showModal();
+  }
 
   function renderInvestigation(b) {
     const inv=S.investigation;
@@ -441,13 +506,13 @@
       const node=button(mode==='workspace'?'Investigation desk':'Guided review',()=>changeDesk(i=>{i.mode=mode;i.summary=false;}));
       node.setAttribute('aria-pressed',String(inv.mode===mode));return node;
     }));
-    append(desk,append(el('header','desk-head'),append(el('div'),el('p','eyebrow','ONE BUSINESS · FOUR QUESTIONS'),title,el('p','detail-meta',[b.address,b.city,b.state].filter(Boolean).join(', ')),append(el('div','tags'),el('span','pill',human(b.queue_status)),...(b.trades||[]).map(t=>el('span','pill muted',human(t))))),append(el('div','desk-head-actions'),button(S.returnToChanges?'← Back to changes':'← Queue',()=>guard(()=>{if(S.returnToChanges){navigate('changes');}else{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}})),modes)));
-    if(inv.source_changed)append(desk,append(el('div','callout warning'),el('p','','Source evidence changed since this draft began. Your answers are retained. Review the updated evidence before saving a decision.'),button('Review updated evidence',()=>reviewUpdatedEvidence())));
-    if(inv.review_changed)append(desk,el('p','callout warning',inv.draft_review_revision==null?'This draft’s saved-review context is unknown. Compare the current saved work before saving a decision.':'Saved decisions changed since this draft began. Your answers are retained. Compare the current saved work before saving a decision.'));
+    append(desk,append(el('header','desk-head'),append(el('div'),el('p','eyebrow','ONE BUSINESS · FOUR QUESTIONS'),title,el('p','detail-meta',[b.address,b.city,b.state].filter(Boolean).join(', ')),append(el('div','tags'),el('span','pill',human(b.queue_status)),...(b.trades||[]).map(t=>el('span','pill muted',human(t))))),append(el('div','desk-head-actions'),button(S.returnToDrafts?'← Back to unfinished work':S.returnToChanges?'← Back to changes':'← Queue',()=>guard(()=>{if(S.returnToDrafts){navigate('unfinished');}else if(S.returnToChanges){navigate('changes');}else{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}})),modes)));
+    if(inv.source_changed)append(desk,append(el('div','callout warning'),el('p','','Source evidence changed since this draft began. Your answers are retained. Review the updated evidence before saving a decision.'),inv.can_review?button('Review updated evidence',()=>reviewUpdatedEvidence()):null));
+    if(inv.review_changed)append(desk,el('p','callout warning','Saved-review context changed or is unknown for unfinished questions. Compare each affected question; saving an unaffected question leaves the others unfinished.'));
     if(b.excluded_reasons?.length)append(desk,el('p',`desk-restriction callout ${inv.can_review?'warning':''}`,inv.can_review?`Excluded from candidates: ${b.excluded_reasons.map(human).join(' · ')}. Evidence can be corrected below.`:'Durable contact exclusion · read-only. This business cannot be reviewed or contacted through this workflow.'));
     const nav=el('nav','question-nav');nav.setAttribute('aria-label','Review questions');
     questionOrder.forEach((key,index)=>{
-      const status=inv.edits[key]?'Draft':inv.questions[key]?'Saved':'Unchecked';
+      const status=inv.edits[key]?(questionConflict(inv,key)?'Compare draft':'Draft'):inv.questions[key]?'Saved':'Unchecked';
       const node=button(`${index+1}. ${questionLabels[key]} · ${status}`,()=>changeDesk(i=>{i.step=index;i.summary=false;}));
       if(inv.step===index&&!inv.summary)node.setAttribute('aria-current','step');
       append(nav,node);
@@ -467,12 +532,13 @@
     if(inv.can_review)append(advanced,el('p','callout','Advanced controls include hold and disposition. Unfinished desk answers remain saved separately.'),reviewForm(b));
     append(advanced,jsonDetails('Current evaluated record',b.review||{}),jsonDetails('All review history',b.reviews||[]),jsonDetails('Assessment and score details',{score:b.score_breakdown,website:b.website_assessment,activity:b.activity_assessment,scope:b.scope_assessment}));
     append(desk,advanced);
-    queueMicrotask(()=>{draftStatus();if(inv.error||inv.review_changed)showDeskError(new Error(inv.error||'Compare saved decisions before resuming this draft.'));});
+    queueMicrotask(()=>{draftStatus();if(inv.error)showDeskError(new Error(inv.error));});
     return desk;
   }
 
   function refreshEvidenceModel(inv,latest) {
     for(const key of ['questions','saved_answers','question_history','evidence','can_review','latest_session'])inv[key]=latest[key];
+    for(const key of ['draft_conflicts','draft_review_revisions','review_changed'])if(key in latest)inv[key]=latest[key];
   }
 
   function lazyDetails(title,build,cls='') {
@@ -505,9 +571,46 @@
     }
     const draft=inv.edits[key];
     if(draft)append(box,append(el('article','draft-comparison'),el('h4','','Unfinished draft · separate from effective answer'),answerDefinition(draft,key),el('p','small',`Draft evidence observed: ${draft.evidence_observed_at||'Not supplied'}`),draft.notes?el('p','evidence-notes',draft.notes):null,el('p','small','These edits have not replaced the effective saved answer.')));
+    if(draft&&inv.draft_conflicts?.[key])append(box,renderDraftComparison(key));
     const historical=inv.question_history?.[key],current=inv.questions?.[key]||{};
     if(historical&&Object.keys({...historical,...current}).some(field=>(historical[field]||'')!==(current[field]||'')))append(box,lazyDetails('Earlier guided answer · superseded history',()=>append(el('div','historical-answer'),answerDefinition(historical,key),el('p','small',`Earlier evidence observed: ${historical.evidence_observed_at||'Unknown'}`),el('p','evidence-notes',historical.notes||'No notes recorded'),historical.evidence_url?link(historical.evidence_url,'Earlier checked evidence ↗'):null,el('p','small','Retained for history; this is not the effective answer or its evidence basis.'))));
     return box;
+  }
+  function comparisonCard(title,key,saved,isDraft=false) {
+    const card=append(el('article','comparison-card'),el('h5','',title));
+    if(!saved){append(card,el('p','small','No saved answer can be established for this context.'));return card;}
+    append(card,answerDefinition(isDraft?saved:saved.answers||{},key),el('p','small',isDraft?'Unsubmitted input':saved.basis_known?'Evidence association known':'Evidence basis unknown'),el('p','small',knownObservationDate(saved.evidence_observed_at)?`Evidence observed: ${saved.evidence_observed_at}`:'Evidence observation date: unknown'),saved.evidence_url?link(saved.evidence_url,'Checked evidence ↗'):el('p','small','Checked evidence URL: unknown'),el('p','evidence-notes',saved.notes||'Checked evidence notes: unknown'));
+    return card;
+  }
+  function renderDraftComparison(key) {
+    const inv=S.investigation,context=inv.draft_conflicts[key],section=el('section','question-comparison');
+    append(section,el('h4','',`${questionLabels[key]} · draft context comparison`),el('p','small',context.unknown?'The draft baseline is unknown. Compare the current saved work before deciding.':context.changed?'Saved-review context changed since this question’s accepted baseline. The answer may be the same; its context still needs review.':'The saved-review context matches this draft question.'));
+    append(section,append(el('div','comparison-grid'),comparisonCard('Review context for this draft',key,context.baseline_saved_answer),comparisonCard('Current saved answer',key,context.current_saved_answer),comparisonCard('Your unfinished answer',key,inv.edits[key],true)));
+    if(questionConflict(inv,key)&&inv.can_review){
+      append(section,el('p','small','These choices prepare only this question. They do not save a review or accept changed source evidence.'),append(el('div','comparison-actions'),button('Keep my draft answer',e=>busy(e.currentTarget,()=>resolveQuestion(key,'keep'),'Keeping…'),'primary'),button('Use current saved answer',e=>busy(e.currentTarget,()=>resolveQuestion(key,'current'),'Loading…')),button('Defer this question',()=>{notice(`${questionLabels[key]} remains unfinished. Other question edits are retained.`);})));
+    }else if(!inv.can_review)append(section,el('p','small','Contact exclusion retained. This draft is available for inspection only.'));
+    return section;
+  }
+  async function resolveQuestion(key,choice) {
+    const inv=S.investigation,id=S.detail.id;
+    if(!inv.can_review||S.reviewSaving||S.navigating)return;
+    S.navigating=true;
+    const locked=Array.from(document.querySelectorAll('.investigation input,.investigation select,.investigation textarea,.investigation button')).filter(node=>!node.disabled);
+    locked.forEach(node=>{node.disabled=true;});
+    try {
+      await persistDraft();
+      const sequence=inv.sequence;
+      const saved=await api(`/api/businesses/${id}/draft`,{review_revision:inv.review_revision,draft_revision:inv.draft_revision,source_revision:inv.source_revision,draft:draftPayload(inv),resolve_review_revision:inv.review_revision,resolve_questions:{[key]:choice}});
+      if(S.investigation!==inv||S.detail?.id!==id)return;
+      Object.assign(inv,{review_revision:saved.review_revision,draft_revision:saved.draft_revision,draft:saved.draft,error:null,conflict:false,request:null});
+      updateDraftContext(inv,saved);
+      if(inv.sequence===sequence){inv.edits=copy(saved.draft?.questions||{});inv.savedSequence=sequence;S.dirty=Boolean(S.advancedDirty);}
+      else {S.dirty=true;notice('The question was resolved; newer input is retained and still needs saving.');}
+      if(choice==='current'&&!(key in inv.edits))inv.questions[key]=copy(inv.saved_answers?.[key]?{...inv.saved_answers[key].answers,...Object.fromEntries(['evidence_url','notes','evidence_observed_at'].map(f=>[f,inv.saved_answers[key][f]||'']))}:{});
+      resolveDeskNotice(choice==='keep'?'Draft answer kept for this question.':'Current saved answer loaded for this question.');
+      render();focusDesk();
+    }catch(error){showDeskError(error);throw error;}
+    finally{S.navigating=false;locked.forEach(node=>{node.disabled=false;});}
   }
 
   function selectedChangeContext(key) {
@@ -609,7 +712,7 @@
     notes.addEventListener('input',()=>saveInput('notes',notes.value));
     append(form,field('Evidence notes',notes,'Explain the basis for this answer.'));
     const submit=el('button','primary',inv.mode==='guided'?'Keep answer & continue →':'Save this question');submit.type='submit';
-    append(form,append(el('div','decision-actions'),submit,button(inv.mode==='guided'?'Skip this question':'Discard this question’s edits',()=>changeDesk(i=>{delete i.edits[key];if(i.mode==='guided'){if(i.step===3)i.summary=true;else i.step++;}})),button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}))));
+    append(form,append(el('div','decision-actions'),submit,button(inv.mode==='guided'?'Skip this question':'Discard this question’s edits',()=>discardQuestion(key,inv.mode==='guided')),button('Save draft & defer',()=>guard(()=>{if(S.returnToDrafts)navigate('unfinished');else{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}}))));
     if(inv.mode==='guided')append(form,button('Review session summary',()=>changeDesk(i=>{i.summary=true;}),'summary-link'));
     form.addEventListener('submit',e=>{
       e.preventDefault();
@@ -632,18 +735,20 @@
       const row=el('article','summary-card');
       append(row,append(el('div','summary-top'),el('h3','',questionLabels[key]),el('span',`pill ${answer?'':'muted'}`,answer?'New answer':'Skipped · previous decision retained')));
       if(answer)append(row,definition(Object.entries(answer).map(([name,value])=>[answerLabels[name]||human(name),['evidence_url','verified_website','candidate_website'].includes(name)&&value?link(value):choiceFields.has(name)?human(value):String(value||'Not supplied')])));
-      append(row,append(el('div','actions'),button(answer?'Edit answer':'Check this question',()=>changeDesk(i=>{i.step=index;i.summary=false;})),answer?button('Skip',()=>changeDesk(i=>{delete i.edits[key];})):null));append(section,row);
+      append(row,append(el('div','actions'),button(answer?'Edit answer':'Check this question',()=>changeDesk(i=>{i.step=index;i.summary=false;})),answer?button('Skip',()=>discardQuestion(key)):null));append(section,row);
     });
     const finish=button('Finish & save review',e=>busy(e.currentTarget,()=>commitInvestigation(Object.keys(inv.edits)),'Saving review…'),'primary');
     finish.disabled=!inv.can_review || !Object.keys(inv.edits).length;
-    append(section,append(el('div','actions section-gap'),finish,button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}))));
+    append(section,append(el('div','actions section-gap'),finish,button('Save draft & defer',()=>guard(()=>{if(S.returnToDrafts)navigate('unfinished');else{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}}))));
     return section;
   }
 
   async function commitInvestigation(keys) {
     if(S.reviewSaving)return;
     const inv=S.investigation,id=S.detail.id;
-    if(inv.review_changed){inv.conflict=true;showDeskError(new Error('Saved decisions changed or the draft context is unknown. Compare latest saved work before saving.'));return;}
+    if(!inv.can_review)return;
+    const unresolved=keys.filter(key=>questionConflict(inv,key));
+    if(unresolved.length){inv.step=questionOrder.indexOf(unresolved[0]);inv.summary=false;notice('Compare this question’s draft context before saving. Your other edits are retained.',true);render();focusDesk();return;}
     if(inv.source_changed){showDeskError(new Error('Source evidence changed. Review updated evidence before saving.'));return;}
     const queueIds=S.list?.matching_ids||[];
     S.nextCandidates=queueIds.slice(queueIds.indexOf(id)+1);
@@ -658,15 +763,15 @@
       if(!Object.keys(questions).length)throw new Error('There are no newly checked answers to submit.');
       inv.request=inv.request||{review_revision:inv.review_revision,draft_revision:inv.draft_revision,source_revision:inv.source_revision,request_id:crypto.randomUUID(),questions};
       const result=await api(`/api/businesses/${id}/investigation`,inv.request);
-      // The commit clears the server draft. Restore any other unfinished answers
-      // with the returned revisions before refreshes that can fail independently.
-      const remaining=Object.fromEntries(Object.entries(inv.edits).filter(([key])=>!keys.includes(key)));
-      Object.assign(inv,{review_revision:result.review_revision,draft_revision:result.draft_revision,draft:null,request:null,edits:remaining,questions:{...inv.questions,...questions},latest_session:{session_id:result.session_id,can_undo:true}});
+      // The backend preserves remaining questions and their original baselines
+      // atomically. Never re-save them against the newly submitted review.
+      Object.assign(inv,{review_revision:result.review_revision,draft_revision:result.draft_revision,draft:result.draft??null,request:null,error:null,conflict:false,edits:copy(result.draft?.questions||{}),questions:{...inv.questions,...questions},latest_session:{session_id:result.session_id,can_undo:true}});
+      updateDraftContext(inv,result);
       inv.saved_answers={...inv.saved_answers};inv.question_history={...inv.question_history,...questions};inv.evidence=null;
       for(const [key,answer] of Object.entries(questions))inv.saved_answers[key]={answers:Object.fromEntries(questionFields[key].map(([field])=>[field,answer[field]]).concat(key==='website'?[['verified_website',answer.verified_website||''],['candidate_website',answer.candidate_website||'']]:[])),basis_known:true,evidence_url:answer.evidence_url,notes:answer.notes,evidence_observed_at:answer.evidence_observed_at};
       inv.sequence++;
-      S.dirty=true;
-      await persistDraft();
+      inv.savedSequence=inv.sequence;
+      S.dirty=false;
       notice('Review saved. Checked answers and their individual evidence are recorded.');
       try {
         const latest=await deskSnapshot(id);
@@ -682,7 +787,7 @@
   }
 
   function showCompletion(sessionId) {
-    if(S.returnToChanges)return;
+    if(S.returnToChanges||S.returnToDrafts)return;
     const footer=document.querySelector('.desk-footer');if(!footer)return;
     append(footer,button('Next business →',()=>guard(nextBusiness),'primary'));
   }
@@ -762,6 +867,7 @@
   }
   async function reviewUpdatedEvidence(){
     const inv=S.investigation,id=S.detail.id,previousRevision=S.investigation.source_revision;let accepting=false;
+    if(!inv.can_review){notice('Contact exclusion retained. This draft is available for inspection only.');return;}
     if(S.advancedDirty){notice('Save or discard advanced edits before reviewing updated evidence. Your input is retained.',true);return;}
     try{await persistDraft();const latest=await deskSnapshot(id);
       if(S.investigation!==inv||S.detail.id!==id)return;

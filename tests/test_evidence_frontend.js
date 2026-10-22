@@ -198,18 +198,14 @@ test('failed refresh keeps input and allows retry without leaving navigation loc
   assert.equal(ui.S.investigation.edits.website.notes,'Retain failed refresh');
 });
 
-test('resumed changed-review draft blocks commit until an explicit comparison resolves it',async()=>{
-  const {ui,server,calls,elements}=harness();
+test('resumed changed-review draft directs the operator to its question comparison',async()=>{
+  const {ui,server,calls}=harness();
   Object.assign(server.snapshot,{draft:{step:1,mode:'workspace',questions:{website:entry}},draft_review_revision:1,review_changed:true});
   ui.setupInvestigation(clone(server.snapshot));
   await ui.commitInvestigation(['website']);
   assert.equal(calls.some(c=>c.route.endsWith('/investigation')&&c.body),false);
-  const box=elements.get('[data-draft-error]');
-  await click(find(box,'button','Compare latest saved work'));
-  await click(find(box,'button','Keep my answers as the draft'));
-  const write=calls.find(c=>c.route.endsWith('/draft'));
-  assert.equal(write.body.resolve_review_revision,3);
-  assert.equal(write.body.source_revision,'source-b');
+  assert.equal(calls.some(c=>c.route.endsWith('/draft')),false);
+  assert.equal(ui.S.investigation.step,1);
   assert.equal(ui.S.investigation.edits.website.website_status,'no_site_found');
 });
 

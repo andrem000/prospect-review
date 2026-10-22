@@ -362,6 +362,11 @@ class Application:
             return self.commit(db, data)
         if method == 'GET' and path == '/api/changes':
             return inbox.list_items(db, self.config())
+        if method == 'GET' and path == '/api/drafts':
+            # Worklist count, rows and context flags belong to one read-only
+            # snapshot, including drafts retained for contact-held businesses.
+            with closing(_memory(db)) as snapshot:
+                return investigation.list_drafts(snapshot, self.evaluated(snapshot), query)
         if method == 'POST' and path == '/api/changes/seen':
             return inbox.set_seen(db, self.config(), data.get('reason_ids'), data.get('seen'))
         if method == 'POST' and path == '/api/demo':

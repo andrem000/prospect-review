@@ -74,6 +74,16 @@ Inspect the original source and proposed answer before using it. A proposal fill
 
 Cards persist in the workspace across restart. Dismiss and restore cards to manage the evidence list without changing saved reviews. Research excerpts are not included in CSV/JSON export bundles; evidence URL and notes enter exported review data only when you explicitly save a review. The app's matching rules are assistance, not an independent verification service.
 
+## Resume unfinished work
+
+Open **Unfinished work** to find businesses with actual question edits saved in this workspace. Empty navigation-only draft state is not counted. Search and page through the list; resuming opens a drafted question and keeps a return path to the same worklist position. Contact-held drafts remain inspectable and read-only.
+
+A saved-review correction can make a draft's review context older even when its answer text looks unchanged. Compare the **Review context for this draft**, **Current saved answer** and **Your draft** for each affected question. Unknown legacy context stays unknown. **Keep my draft answer** retains that question's editable draft against the displayed current review; **Use current saved answer** explicitly removes that question's unfinished edits so the current answer is shown. **Defer this question** leaves the question unresolved and its input intact. These choices prepare a draft; they do not submit a review, refresh evidence dates or mark Changes reasons seen.
+
+Saving a resolved question preserves other unfinished questions and their original contexts, including unresolved ones. A concurrent correction can require comparison again. Source changes are a separate guard: reviewing updated source evidence does not resolve saved-review conflicts, and choosing a review answer does not accept changed source evidence.
+
+Watch the draft status before closing: **saved**, **unsaved** and **failed save** are different states. Failed saves retain input in the open editor for retry; unsaved input is not guaranteed across closing or a process restart. Saved question drafts and unresolved context survive restart. Refresh and navigation protect edits made while requests are pending.
+
 ## Exclusions and exports
 
 Import an existing exclusion file through Settings before relying on a queue. CSV, JSON and JSONL use the suppression keys in the [reference](REFERENCE.md#suppression-and-reconciliation). Exclusions remain in the workspace and are visible in the excluded audit view.

@@ -50,9 +50,11 @@ function harness() {
       let result=server.requests.get(body.request_id);
       if(!result){
         assert.equal(body.review_revision,server.review);assert.equal(body.draft_revision,server.revision);
-        server.review++;server.revision++;server.draft=null;server.commits++;
+        server.review++;server.revision++;server.commits++;
+        const remaining=Object.fromEntries(Object.entries(server.draft?.questions||{}).filter(([q])=>!(q in body.questions)));
+        server.draft=Object.keys(remaining).length?{...server.draft,questions:remaining}:null;
         Object.assign(server.questions,clone(body.questions));
-        result={review_revision:server.review,draft_revision:server.revision,session_id:'fixture-session',review:{}};
+        result={review_revision:server.review,draft_revision:server.revision,session_id:'fixture-session',review:{},draft:clone(server.draft)};
         server.requests.set(body.request_id,result);
       }
       if(server.loseCommitResponse){server.loseCommitResponse=false;throw Error('Injected lost successful response');}
@@ -96,16 +98,17 @@ test('workspace save retains other unfinished answers despite a failed refresh',
   assert.deepEqual(clone(desk.S.investigation.edits),{activity});
 });
 
-test('failed remainder persistence can be retried without losing answers or repeating the review',async()=>{
+test('atomic remainder needs no frontend persistence after the review',async()=>{
   const {desk,server}=harness();pending(desk,server);server.failDrafts=1;
   await desk.commitInvestigation(['website']).catch(()=>{});
   await desk.persistDraft();
   assert.equal(server.commits,1);
   assert.deepEqual(server.draft?.questions,{activity});
+  assert.equal(server.calls.filter(c=>c.route.endsWith('/draft')).length,0);
 });
 
-test('an ambiguous successful response retries the same review once',async()=>{
-  const {desk,server}=harness();pending(desk,server);server.loseCommitResponse=true;
+test('ambiguous successful retry clears its old error even if the following refresh fails',async()=>{
+  const {desk,server}=harness();pending(desk,server);server.loseCommitResponse=true;server.failReads=true;
   await desk.commitInvestigation(['website']).catch(()=>{});
   await desk.commitInvestigation(['website']).catch(()=>{});
   assert.equal(server.commits,1);
@@ -113,6 +116,9 @@ test('an ambiguous successful response retries the same review once',async()=>{
   assert.equal(commits.length,2);
   assert.equal(commits[0].body.request_id,commits[1].body.request_id);
   assert.deepEqual(server.draft?.questions,{activity});
+  assert.equal(desk.S.investigation.error,null);
+  assert.equal(desk.S.investigation.conflict,false);
+  assert.equal(desk.S.dirty,false);
 });
 
 function prepareAdvancedSave(desk) {

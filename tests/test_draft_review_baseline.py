@@ -100,6 +100,8 @@ class DraftReviewBaselineTests(TestCase):
         self.stop()
         with closing(sqlite3.connect(self.workspace / 'review.sqlite3')) as db:
             db.execute('ALTER TABLE investigation_state DROP COLUMN draft_review_revision')
+            db.execute('ALTER TABLE investigation_state DROP COLUMN draft_review_revisions')
+            db.execute('ALTER TABLE investigation_sessions DROP COLUMN before_draft_review_revisions')
             for field in ('before_draft_review_revision', 'before_review_revision'):
                 db.execute('ALTER TABLE investigation_sessions DROP COLUMN ' + field)
             db.commit()
@@ -159,12 +161,14 @@ class DraftReviewBaselineTests(TestCase):
         self.ok('POST', self.base + '/investigation/undo', dict(
             session_id=saved['session_id'], review_revision=saved['review_revision']))
         restored = self.state()
-        self.assertEqual(restored['draft_review_revision'], baseline)
+        self.assertIsNone(restored['draft_review_revision'])
+        self.assertEqual(restored['draft_review_revisions']['activity'], baseline)
+        self.assertEqual(restored['draft_review_revisions']['website'], restored['review_revision'])
         self.assertTrue(restored['review_changed'])
         self.assertEqual(restored['draft']['questions']['activity'], newer['questions']['activity'])
         self.assertEqual(restored['draft']['questions']['website'], original['questions']['website'])
         self.assertEqual(self.request('POST', self.base + '/investigation',
-            self.payload(original['questions'], 'after-undo'))[0], 409)
+            self.payload({'activity': self.entry(activity='active')}, 'after-undo'))[0], 409)
 
     def test_pristine_undo_tracks_proven_restored_snapshot_and_legacy_undo_is_unknown(self):
         draft = self.unfinished()
@@ -178,7 +182,7 @@ class DraftReviewBaselineTests(TestCase):
         saved = self.save(draft['questions'], 'second')
         self.stop()
         with closing(sqlite3.connect(self.workspace / 'review.sqlite3')) as db:
-            db.execute('UPDATE investigation_sessions SET before_draft_review_revision=NULL,before_review_revision=NULL')
+            db.execute('UPDATE investigation_sessions SET before_draft_review_revision=NULL,before_review_revision=NULL,before_draft_review_revisions=NULL')
             db.commit()
         self.start()
         self.ok('POST', self.base + '/investigation/undo', dict(
