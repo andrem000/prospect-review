@@ -42,3 +42,8 @@ wheelhouse/
 local-data/
 demo-output/
 prospect-review-workspace/
+
+# Local coordination and verification receipts are not public source material.
+/docs/handoffs/
+/docs/planning/
+/docs/verification/

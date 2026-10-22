@@ -7,15 +7,55 @@ from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-from . import core, investigation
+from . import core, investigation, changes
 from . import research_network as network
 
 MAX_CONTENT = network.MAX_CONTENT
+CONTEXT_FIELDS = ('name', 'address', 'city', 'state', 'phones', 'websites')
 
 
 def fingerprint(business):
-    value = {k: business.get(k) for k in ('name', 'address', 'city', 'state', 'phones', 'websites')}
+    """Versioned semantic aggregate context, excluding equivalent formatting."""
+    normalized = changes.meaningful(business)
+    value = {key: normalized[key] for key in CONTEXT_FIELDS}
+    return 'v2:' + hashlib.sha256(investigation.encoded(value).encode()).hexdigest()
+
+
+def _legacy_fingerprint(business):
+    value = {key: business.get(key) for key in CONTEXT_FIELDS}
     return hashlib.sha256(investigation.encoded(value).encode()).hexdigest()
+
+
+def _legacy_contexts(business):
+    """Exact historical aggregate hashes paired with their semantic contexts.
+
+    Legacy cards stored no business snapshot. Recover an association only when
+    their original hash matches a prefix of the retained observation history;
+    never accept merely similar names or an unmatched legacy hash. No old card
+    or evidence is rewritten during this read-time compatibility check.
+    """
+    aggregate = dict.fromkeys(('name', 'address', 'city', 'state'), '')
+    aggregate.update(phones=[], websites=[])
+    contexts = {}
+    for observation in business.get('observations', []):
+        for key in ('name', 'address', 'city', 'state'):
+            if observation.get(key):
+                aggregate[key] = observation[key]
+        for key in ('phones', 'websites'):
+            aggregate[key] = sorted(set(aggregate[key]) | set(observation.get(key) or []))
+        contexts[_legacy_fingerprint(aggregate)] = fingerprint(aggregate)
+    return contexts
+
+
+def is_stale(row, business, legacy_contexts=None):
+    """Keep new and provably associated legacy cards valid across formatting."""
+    stored, current = row['fingerprint'], fingerprint(business)
+    if stored.startswith('v2:'):
+        return stored != current
+    if stored == _legacy_fingerprint(business):
+        return False
+    contexts = _legacy_contexts(business) if legacy_contexts is None else legacy_contexts
+    return contexts.get(stored) != current
 
 
 def initialize(db):
@@ -215,7 +255,7 @@ def analyze(business, content, url, final_url, mode, observed_at, media='text/ht
 
 def read_record(row, business):
     record = json.loads(row['data'])
-    record['stale'] = row['fingerprint'] != fingerprint(business)
+    record['stale'] = is_stale(row, business)
     return record
 
 
@@ -244,5 +284,5 @@ def dismiss(db, bid, rid, data, business):
     record['dismissed'] = data['dismissed']
     with db:
         db.execute('UPDATE research_records SET data=? WHERE id=?', (investigation.encoded(record), rid))
-    record['stale'] = row['fingerprint'] != fingerprint(business)
+    record['stale'] = is_stale(row, business)
     return {'record': record}

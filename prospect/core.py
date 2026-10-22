@@ -72,6 +72,8 @@ def connect(path):
     CREATE TABLE IF NOT EXISTS suppressions(kind TEXT, value TEXT, reason TEXT, PRIMARY KEY(kind,value));
     CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY, created_at TEXT, kind TEXT, metrics TEXT);
     ''')
+    from . import changes
+    changes.initialize(db)
     return db
 
 
@@ -153,23 +155,36 @@ def log_run(db, kind, metrics):
 
 def import_data(db, path, adapter, rights):
     manifest = load_rights(rights, adapter)
+    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    normalized = (normalize(ADAPTERS[adapter](raw)) for raw in records(path))
+    return import_rows(db, normalized, manifest, digest)
+
+
+def import_rows(db, normalized_rows, manifest, file_sha256):
+    """Import already normalized, rights-validated rows, also usable on a preview copy.
+
+    Internal callers must validate the source manifest before calling this helper.
+    Row iteration and all observation/event writes share one atomic transaction.
+    """
+    from . import changes
     metrics = dict(records_read=0, inserted=0, duplicates=0, outside_us=0, missing_geography=0,
                    non_us_or_unsupported_geography=0, missing_categories=0, api_requests=0, estimated_cost_usd=0)
-    existing = all_businesses(db)
-    aliases = {(o['source'], o['source_id']): b['id'] for b in existing for o in b['observations']}
-    keys = {}
-    for b in existing:
-        for o in b['observations']:
-            for key in identity_keys(o):
-                keys.setdefault(key, set()).add(b['id'])
-    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    # One transaction: a malformed row cannot leave a partial import.
+    # Pin identity and comparison baselines under the same writer lock as the
+    # inserts. A concurrent CLI/app import must not reuse a stale alias map.
     with db:
+        db.execute('BEGIN IMMEDIATE')
+        existing = all_businesses(db)
+        comparison = changes.Comparison(db, existing)
+        aliases = {(o['source'], o['source_id']): b['id'] for b in existing for o in b['observations']}
+        keys = {}
+        for b in existing:
+            for o in b['observations']:
+                for key in identity_keys(o):
+                    keys.setdefault(key, set()).add(b['id'])
         batch = db.execute('INSERT INTO batches(imported_at,source,file_sha256,manifest) VALUES(?,?,?,?)',
-                           (now(), manifest['source'], digest, json.dumps(manifest))).lastrowid
-        for raw in records(path):
+                           (now(), manifest['source'], file_sha256, json.dumps(manifest))).lastrowid
+        for row in normalized_rows:
             metrics['records_read'] += 1
-            row = normalize(ADAPTERS[adapter](raw))
             if not row['categories']:
                 metrics['missing_categories'] += 1
             if row['country'] != 'US' or row['state'] not in STATES:
@@ -189,10 +204,12 @@ def import_data(db, path, adapter, rights):
                 metrics['duplicates'] += 1
             db.execute('INSERT INTO observations(business_id,batch_id,source,source_id,data) VALUES(?,?,?,?,?)',
                        (bid, batch, *alias, json.dumps(row)))
+            comparison.record(bid, batch, manifest['source'], row, matches)
             aliases[alias] = bid
             for key in identity_keys(row):
                 keys.setdefault(key, set()).add(bid)
         metrics['batch_id'] = batch
+        metrics['comparison'] = comparison.finish(metrics['inserted'], metrics['outside_us'])
         log_run(db, 'import', metrics)
     return metrics
 
@@ -273,7 +290,7 @@ def suppress(db, path):
 REVIEW_DEFAULTS = dict(website_status='unreviewed', verified_website='', candidate_website='',
                        activity='unknown', ownership='unknown', residential='unknown',
                        service_fit='unknown', delivery='unknown', disposition='pending',
-                       queue_hold=False, evidence_observed_at=None)
+                       queue_hold=False, evidence_observed_at=None, identity_status='unknown')
 ACTIVITY_EVIDENCE_FIELDS = ('activity_evidence_observed_at', 'activity_evidence_url', 'activity_evidence_notes')
 
 
@@ -303,7 +320,8 @@ def review(db, bid, data, replace=False):
         raise ValueError('Invalid website_status')
     choices = {'activity': ('unknown', 'active', 'closed'), 'ownership': ('unknown', 'independent', 'chain'),
                'residential': ('unknown', 'yes', 'no'), 'service_fit': ('unknown', 'yes', 'no'),
-               'delivery': ('unknown', 'mobile', 'fixed'), 'disposition': ('pending', 'rejected', 'contacted')}
+               'delivery': ('unknown', 'mobile', 'fixed'), 'disposition': ('pending', 'rejected', 'contacted'),
+               'identity_status': ('unknown', 'same_business', 'different_businesses', 'uncertain')}
     for field, allowed in choices.items():
         if effective[field] not in allowed:
             raise ValueError('Invalid ' + field)

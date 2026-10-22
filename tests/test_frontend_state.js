@@ -34,7 +34,7 @@ function harness() {
     querySelectorAll: ()=>[],
   };
   const server={review:0,revision:0,draft:null,questions:{},commits:0,requests:new Map(),calls:[],failReads:false,failDrafts:0,loseCommitResponse:false};
-  const snapshot=()=>({review_revision:server.review,draft_revision:server.revision,draft:clone(server.draft),questions:clone(server.questions),can_review:true,latest_session:null});
+  const snapshot=()=>({business:{id:1,name:'Fictional Paint',review:{},observations:[],excluded_reasons:[]},review_revision:server.review,draft_revision:server.revision,draft:clone(server.draft),questions:clone(server.questions),can_review:true,latest_session:null});
   const fetch=async (route,options)=>{
     const body=options.body?JSON.parse(options.body):undefined;
     server.calls.push({route,body});

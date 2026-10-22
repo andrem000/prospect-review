@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 2026-10-22
+
+- Compare reimports before confirmation and show meaningful source changes in a persistent Changes inbox.
+- Acknowledge or restore individual alerts without changing review decisions, drafts or exclusions.
+- Show old or unknown evidence separately for saved review questions; retain activity qualification rules and add a separate advisory reminder window.
+- Preserve unfinished work when source evidence changes, including across undo and upgrade from v0.4.
+- Keep formatting-only imports quiet, preserve saved identity decisions on unrelated edits, and protect imports against concurrent local writes.
+- Bind displayed investigation evidence to its save revisions, serialize workspace upgrades, and surface newly supplied evidence from additional sources.
+
 ## 0.4.0 — 2026-10-22
 
 - Add explicit research assistance for a supplied public website link, with a saved-page text/HTML option that works offline.

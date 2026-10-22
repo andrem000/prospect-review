@@ -137,8 +137,8 @@ class DistributionBehaviorTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 run(target)
 
-    def test_module_version_is_public_release_version(self):
+    def test_module_version_matches_distribution_version(self):
         result = subprocess.run([sys.executable, '-m', 'prospect', '--version'], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), 'Prospect Review ' + __version__)
-        self.assertEqual(__version__, '0.4.0')
+        self.assertIn('version = "' + __version__ + '"', (ROOT / 'pyproject.toml').read_text())

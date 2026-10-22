@@ -18,6 +18,8 @@ Use `python3` if that is your Python 3 command. Your browser opens the app; keep
 
 The app previews and maps CSV/JSON/JSONL files, records source permissions, and opens an Investigation desk with a searchable business queue, source evidence and explicit decisions. Guided review walks through identity, website, activity and service fit, then shows an editable summary before saving. Export selected or filtered records with their provenance in a ZIP. Reviews, unfinished drafts, settings and exports persist in `prospect-review-workspace/`. Launch from the same directory to resume, or use `--workspace /path/to/workspace` to choose another workspace.
 
+The **Changes** inbox compares a reimport before confirmation, shows meaningful changes beside saved answers, and highlights old or undated evidence that needs attention. Marking an alert seen never replaces a decision or refreshes its evidence. Existing drafts survive reimports and warn when their source context changed.
+
 The app runs on your machine, with no accounts, external interface assets or runtime dependencies. Optional research assistance checks one public website link you supply, only when you request it. It shows captured evidence and matching or conflicting business details; you decide whether to use a proposed answer in a draft. You can also analyze a saved page offline. No automatic review or outreach follows.
 
 The server listens only on `127.0.0.1`; it is intended for a single local user. [The local app guide](docs/LOCAL-APP.md) covers the complete workflow, research limits and backups. The existing CLI remains available.

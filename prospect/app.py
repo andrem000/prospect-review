@@ -10,6 +10,7 @@ import secrets
 import shutil
 import sqlite3
 import threading
+import time
 import webbrowser
 import zipfile
 from contextlib import closing
@@ -20,6 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import core, investigation, research, __version__
+from . import inbox
 from .providers import ADAPTERS
 
 MAX_BODY = 8 * 1024 * 1024
@@ -92,6 +94,16 @@ def _memory(db):
     return copy
 
 
+def _import_revision(db):
+    """Pin evidence and review work used by a comparison across HTTP requests."""
+    digest = hashlib.sha256()
+    for table in ('observations', 'reviews', 'suppressions', 'investigation_state'):
+        digest.update(table.encode())
+        for row in db.execute('SELECT * FROM ' + table + ' ORDER BY rowid'):
+            digest.update(_json(list(row)))
+    return digest.hexdigest()
+
+
 class Application:
     def __init__(self, workspace):
         self.root = Path(workspace).resolve()
@@ -110,6 +122,7 @@ class Application:
         with closing(core.connect(self.dbpath)) as db:
             investigation.initialize(db)
             research.initialize(db)
+            inbox.initialize(db)
             db.execute('CREATE TABLE IF NOT EXISTS app_exports(id TEXT PRIMARY KEY, data TEXT NOT NULL)')
             db.commit()
             if not self.configpath.exists():
@@ -123,6 +136,8 @@ class Application:
     def validate_config(self, value, db):
         if not isinstance(value, dict):
             raise ValueError('Config must be an object')
+        if type(value.get('advisory_review_days', 180)) is not int or not 0 <= value.get('advisory_review_days', 180) <= 3650:
+            raise ValueError('Advisory review window must be an integer from 0 to 3650 days')
         if any(not isinstance(x, str) for x in value.get('chain_names', [])):
             raise ValueError('chain_names must contain strings')
         regions = value.get('regions', [])
@@ -181,6 +196,26 @@ class Application:
                                         filename=filename, adapter=adapter, mapping=result['mapping'])
         return result
 
+    def compare(self, db, data):
+        preview = self.previews.get(data.get('preview_id'))
+        if not preview or not preview['result']['can_import']:
+            raise ValueError('Preview is missing, invalid or expired; preview again')
+        source = data.get('source')
+        if not isinstance(source, str) or not source.strip() or len(source) > 500:
+            raise ValueError('Enter a source name before comparing imports')
+        if preview['adapter'] in ('osm', 'overture') and source != preview['adapter']:
+            raise ValueError('Adapter requires matching source name')
+        with closing(_memory(db)) as staged:
+            revision = _import_revision(staged)
+            metrics = core.import_rows(staged, preview['normalized'], {'source': source},
+                                       hashlib.sha256(_json(preview['normalized'])).hexdigest())
+            events = [dict(business_id=row['business_id'], **json.loads(row['data'])) for row in
+                      staged.execute('SELECT * FROM change_events WHERE batch_id=? ORDER BY id LIMIT 201', (metrics['batch_id'],))]
+        result = dict(comparison_id=secrets.token_hex(16), summary=metrics['comparison'],
+                      changes=events[:200], changes_truncated=len(events) > 200)
+        preview['comparison'] = dict(source=source, revision=revision, result=result)
+        return result
+
     def commit(self, db, data):
         preview = self.previews.get(data.get('preview_id'))
         if not preview or not preview['result']['can_import']:
@@ -207,6 +242,11 @@ class Application:
             raise ValueError('Non-synthetic sources require uploaded license/notice text')
         if preview['adapter'] in ('osm', 'overture') and rights['source'] != preview['adapter']:
             raise ValueError('Adapter requires matching source name')
+        comparison = preview.get('comparison')
+        if comparison or data.get('comparison_id') is not None:
+            if (not comparison or data.get('comparison_id') != comparison['result']['comparison_id']
+                    or comparison['source'] != rights['source'] or comparison['revision'] != _import_revision(db)):
+                raise investigation.Conflict('Workspace or source changed since comparison; compare again before importing')
         manifest = {k: rights[k] for k in required + ('retention_permitted', 'export_permitted', 'lead_discovery_permitted')}
         ident = secrets.token_hex(16)
         folder = self.root / 'imports' / ident
@@ -225,13 +265,25 @@ class Application:
                 normalized_sha256=hashlib.sha256(normalized).hexdigest(), adapter=preview['adapter'], mapping=preview['mapping'],
                 notice_labels=[_label(n['name']) for n in notices], transformation='adapter/column mapping followed by canonical normalization')
             (folder / 'rights.json').write_bytes(_json(manifest))
-            # Work against a full copy: core commits internally, but failed imports or
-            # the workspace limit must never leave a partially changed live database.
+            # Stage validation, then publish only new import rows under a writer
+            # lock. Never replace newer reviews/drafts with an earlier DB backup.
+            data_version = db.execute('PRAGMA data_version').fetchone()[0]
+            tables = ('businesses', 'batches', 'observations', 'change_events', 'runs')
+            maxima = {table: db.execute('SELECT COALESCE(MAX(id),0) FROM ' + table).fetchone()[0] for table in tables}
             with closing(_memory(db)) as staged:
                 metrics = core.import_data(staged, folder / 'normalized.json', 'canonical', folder / 'rights.json')
                 if staged.execute('SELECT COUNT(*) FROM businesses').fetchone()[0] > MAX_IDENTITIES:
                     raise ValueError('Workspace is limited to 20,000 identities')
-                staged.backup(db)
+                with db:
+                    db.execute('BEGIN IMMEDIATE')
+                    if db.execute('PRAGMA data_version').fetchone()[0] != data_version:
+                        raise investigation.Conflict('Workspace changed while importing; compare again before retrying')
+                    if comparison and comparison['revision'] != _import_revision(db):
+                        raise investigation.Conflict('Workspace changed since comparison; compare again before importing')
+                    for table in tables:
+                        rows = [tuple(row) for row in staged.execute('SELECT * FROM ' + table + ' WHERE id>? ORDER BY id', (maxima[table],))]
+                        if rows:
+                            db.executemany('INSERT INTO ' + table + ' VALUES(' + ','.join('?' for _ in rows[0]) + ')', rows)
             del self.previews[data['preview_id']]
             return {'metrics': metrics}
         except BaseException:
@@ -304,8 +356,14 @@ class Application:
                         exports=[json.loads(r[0]) for r in db.execute('SELECT data FROM app_exports ORDER BY rowid DESC')])
         if method == 'POST' and path == '/api/import/preview':
             return self.preview(data)
+        if method == 'POST' and path == '/api/import/compare':
+            return self.compare(db, data)
         if method == 'POST' and path == '/api/import/commit':
             return self.commit(db, data)
+        if method == 'GET' and path == '/api/changes':
+            return inbox.list_items(db, self.config())
+        if method == 'POST' and path == '/api/changes/seen':
+            return inbox.set_seen(db, self.config(), data.get('reason_ids'), data.get('seen'))
         if method == 'POST' and path == '/api/demo':
             if db.execute('SELECT COUNT(*) FROM batches').fetchone()[0] or db.execute('SELECT COUNT(*) FROM businesses').fetchone()[0] or db.execute('SELECT COUNT(*) FROM suppressions').fetchone()[0]:
                 raise ValueError('Fictional demo requires an empty workspace')
@@ -342,9 +400,14 @@ class Application:
             bid, operation = int(investigation_route[1]), investigation_route[2]
             if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
                 raise LookupError('Business not found')
-            business = next(b for b in self.evaluated(db) if b['id'] == bid)
             if method == 'GET' and operation == 'investigation':
-                return investigation.read(db, bid, business)
+                # Details and revision tokens describe exactly one evidence
+                # snapshot, even when another server/CLI writes during this GET.
+                # Never combine old displayed details with a newer save token.
+                with closing(_memory(db)) as snapshot:
+                    business = next(b for b in self.evaluated(snapshot) if b['id'] == bid)
+                    return {**investigation.read(snapshot, bid, business), 'business': business}
+            business = next(b for b in self.evaluated(db) if b['id'] == bid)
             if method == 'POST':
                 if operation == 'draft':
                     if data.get('draft') is not None and 'suppressed_or_contacted' in business['excluded_reasons']:
@@ -372,7 +435,12 @@ class Application:
                     raise ValueError('queue_hold must be a boolean')
                 if any(k != 'queue_hold' and v is not None and not isinstance(v, str) for k, v in changes.items()):
                     raise ValueError('Review values must be strings (evidence date may be null)')
-                review = core.review(db, bid, changes, replace=data.get('replace', False))
+                with db:
+                    db.execute('BEGIN IMMEDIATE')
+                    if 'review_revision' in data:
+                        investigation.check_revisions(db, bid, data, with_draft=False)
+                    investigation.check_source(db, bid, data)
+                    review = core.review(db, bid, changes, replace=data.get('replace', False))
                 return {'reviewed': bid, 'review': review}
         if method == 'GET' and path == '/api/businesses':
             return self.listing(db, query)
@@ -453,6 +521,31 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def reject(self, status, message):
+        # Closing a Windows socket with unread request bytes can reset it before
+        # the caller receives the denial. Discard a bounded body without parsing
+        # it, keeping a total deadline even for a slow or incomplete request.
+        lengths = self.headers.get_all('Content-Length') or []
+        if self.command == 'POST' and len(lengths) == 1 and not self.headers.get('Transfer-Encoding'):
+            try:
+                remaining = min(max(int(lengths[0]), 0), 65536)
+            except ValueError:
+                remaining = 0
+            previous_timeout = self.connection.gettimeout()
+            deadline = time.monotonic() + 0.25
+            try:
+                while remaining and time.monotonic() < deadline:
+                    self.connection.settimeout(max(0.001, deadline - time.monotonic()))
+                    chunk = self.rfile.read1(remaining)
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                pass
+            finally:
+                self.connection.settimeout(previous_timeout)
+        return self.reply(status, _json({'error': message}))
+
     def do_GET(self):
         self.handle_request('GET')
 
@@ -464,28 +557,28 @@ class Handler(BaseHTTPRequestHandler):
             app = self.server.app
             host = f'127.0.0.1:{self.server.server_port}'
             if self.headers.get_all('Host') != [host]:
-                return self.reply(403, _json({'error': 'Host must match the local application address'}))
+                return self.reject(403, 'Host must match the local application address')
             origins = self.headers.get_all('Origin') or []
             if origins and origins != ['http://' + host]:
-                return self.reply(403, _json({'error': 'Cross-origin requests are not permitted'}))
+                return self.reject(403, 'Cross-origin requests are not permitted')
             if self.headers.get('Sec-Fetch-Site') == 'cross-site':
-                return self.reply(403, _json({'error': 'Cross-site requests are not permitted'}))
+                return self.reject(403, 'Cross-site requests are not permitted')
             parsed = urlsplit(self.path)
             if parsed.scheme or parsed.netloc:
                 raise ValueError('Absolute request URLs are unsupported')
             path = parsed.path
             if path.startswith('/api/'):
                 if self.headers.get_all('X-Prospect-Token') != [app.token]:
-                    return self.reply(403, _json({'error': 'Session token is required; reload the application'}))
+                    return self.reject(403, 'Session token is required; reload the application')
                 data = {}
                 if method == 'POST':
                     if self.headers.get('Transfer-Encoding') or len(self.headers.get_all('Content-Length') or []) != 1:
                         raise ValueError('A single Content-Length is required')
                     size = int(self.headers.get('Content-Length', '-1'))
                     if not 0 <= size <= MAX_BODY:
-                        return self.reply(413, _json({'error': 'Request exceeds the 8 MiB limit'}))
+                        return self.reject(413, 'Request exceeds the 8 MiB limit')
                     if self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json':
-                        return self.reply(415, _json({'error': 'Use application/json UTF8 requests'}))
+                        return self.reject(415, 'Use application/json UTF8 requests')
                     raw = self.rfile.read(size)
                     data = json.loads(raw.decode('utf-8'), parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON value')))
                     if not isinstance(data, dict):

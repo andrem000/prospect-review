@@ -146,3 +146,8 @@
 .research-dismissed{border-style:dashed;background:#fafaf7}
 .research-footnote{border-top:1px solid var(--line);padding-top:13px;margin-top:15px;font-size:11px;line-height:1.6}
 @media(max-width:700px){.research-assistance{padding:12px}.research-card{padding:12px}.research-form>.primary{width:100%}.research-toolbar{align-items:flex-start}.research-clues li{line-height:1.65}}
+
+/* Changes inbox comparisons. */
+.change-values th:first-child,.change-values td:first-child{width:18%}.change-values th:nth-child(2),.change-values td:nth-child(2),.change-values th:nth-child(3),.change-values td:nth-child(3){width:41%}
+.changes-results{display:grid;gap:18px}.change-reason{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.change-reason h4{margin:0 0 8px}.change-reason>p,.change-reason>a{display:block;margin:8px 0}.change-reason>button{margin:10px 8px 0 0}.change-values{width:100%;table-layout:fixed;margin:12px 0}.change-values td,.change-values th{white-space:normal;overflow-wrap:anywhere;vertical-align:top}.import-comparison{margin-top:24px}.changes-results>.actions{align-items:center}
+@media(max-width:700px){.change-reason{padding:11px}.change-values td,.change-values th{padding:7px;font-size:11px}}

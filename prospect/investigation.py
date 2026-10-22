@@ -7,7 +7,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 
-from . import core
+from . import core, changes
 
 
 class Conflict(Exception):
@@ -25,16 +25,30 @@ EVIDENCE = {'evidence_url', 'notes', 'evidence_observed_at'}
 
 
 def initialize(db):
-    db.executescript('''
-    CREATE TABLE IF NOT EXISTS investigation_state(
-      business_id INTEGER PRIMARY KEY REFERENCES businesses(id), draft_revision INTEGER NOT NULL,
-      draft TEXT, questions TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS investigation_sessions(
-      session_id TEXT PRIMARY KEY, business_id INTEGER NOT NULL REFERENCES businesses(id),
-      request_id TEXT UNIQUE NOT NULL, payload TEXT NOT NULL, result TEXT NOT NULL,
-      before_review TEXT NOT NULL, before_questions TEXT NOT NULL, submitted TEXT NOT NULL,
-      before_draft TEXT, final_revision INTEGER NOT NULL, undone INTEGER NOT NULL DEFAULT 0);
-    ''')
+    # Serialize schema inspection too: two app launches must not both decide
+    # to add a column. Individual execute calls keep DDL and backfill in the
+    # same transaction; executescript would implicitly commit it first.
+    with db:
+        db.execute('BEGIN IMMEDIATE')
+        db.execute('''CREATE TABLE IF NOT EXISTS investigation_state(
+          business_id INTEGER PRIMARY KEY REFERENCES businesses(id), draft_revision INTEGER NOT NULL,
+          draft TEXT, questions TEXT NOT NULL)''')
+        db.execute('''CREATE TABLE IF NOT EXISTS investigation_sessions(
+          session_id TEXT PRIMARY KEY, business_id INTEGER NOT NULL REFERENCES businesses(id),
+          request_id TEXT UNIQUE NOT NULL, payload TEXT NOT NULL, result TEXT NOT NULL,
+          before_review TEXT NOT NULL, before_questions TEXT NOT NULL, submitted TEXT NOT NULL,
+          before_draft TEXT, final_revision INTEGER NOT NULL, undone INTEGER NOT NULL DEFAULT 0)''')
+        if 'draft_source_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_state)')}:
+            db.execute('ALTER TABLE investigation_state ADD COLUMN draft_source_revision TEXT')
+        if 'source_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_sessions)')}:
+            db.execute('ALTER TABLE investigation_sessions ADD COLUMN source_revision TEXT')
+        # Treat existing v0.4 work as the upgrade baseline, without changing answers.
+        for row in db.execute('SELECT business_id FROM investigation_state WHERE draft_source_revision IS NULL').fetchall():
+            db.execute('UPDATE investigation_state SET draft_source_revision=? WHERE business_id=?',
+                       (changes.source_revision(db, row['business_id']), row['business_id']))
+        for row in db.execute('SELECT session_id,business_id FROM investigation_sessions WHERE source_revision IS NULL').fetchall():
+            db.execute('UPDATE investigation_sessions SET source_revision=? WHERE session_id=?',
+                       (changes.source_revision(db, row['business_id']), row['session_id']))
 
 
 def encoded(value):
@@ -50,9 +64,27 @@ def state(db, bid):
     return (row['draft_revision'], json.loads(row['draft']), json.loads(row['questions'])) if row else (0, None, {})
 
 
-def write_state(db, bid, draft_revision, draft, questions):
-    db.execute('INSERT OR REPLACE INTO investigation_state VALUES(?,?,?,?)',
-               (bid, draft_revision, encoded(draft), encoded(questions)))
+def draft_source(db, bid):
+    row = db.execute('SELECT draft_source_revision FROM investigation_state WHERE business_id=?', (bid,)).fetchone()
+    return row[0] if row else None
+
+
+def write_state(db, bid, draft_revision, draft, questions, source_revision=None):
+    source_revision = source_revision or draft_source(db, bid) or changes.source_revision(db, bid)
+    db.execute('INSERT OR REPLACE INTO investigation_state(business_id,draft_revision,draft,questions,draft_source_revision) VALUES(?,?,?,?,?)',
+               (bid, draft_revision, encoded(draft), encoded(questions), source_revision))
+
+
+def check_source(db, bid, data, allow_stale=False):
+    supplied = data.get('source_revision')
+    if supplied is not None and (not isinstance(supplied, str) or not re.fullmatch(r'[a-f0-9]{64}', supplied)):
+        raise ValueError('source_revision must identify the displayed source evidence')
+    current = changes.source_revision(db, bid)
+    _, draft, _ = state(db, bid)
+    baseline = supplied or (draft_source(db, bid) if draft else None) or current
+    if not allow_stale and baseline != current:
+        raise Conflict('Source evidence changed; review the updated evidence before saving. Your unfinished draft is preserved.')
+    return baseline
 
 
 def contact_excluded(db, bid):
@@ -132,23 +164,28 @@ def read(db, bid, business):
                       review_revision=row['final_revision'], undone=bool(row['undone']),
                       can_undo=not row['undone'] and row['final_revision'] == current)
     return dict(review_revision=current, draft_revision=draft_revision, draft=draft, questions=questions,
-                can_review='suppressed_or_contacted' not in business['excluded_reasons'], latest_session=latest)
+                can_review='suppressed_or_contacted' not in business['excluded_reasons'], latest_session=latest,
+                source_revision=changes.source_revision(db, bid), draft_source_revision=draft_source(db, bid),
+                source_changed=bool(draft and draft_source(db, bid) != changes.source_revision(db, bid)))
 
 
 def save_draft(db, bid, data):
-    checked_keys(data, ('review_revision', 'draft_revision', 'draft'), ('review_revision', 'draft_revision', 'draft'))
+    checked_keys(data, ('review_revision', 'draft_revision', 'source_revision', 'draft'), ('review_revision', 'draft_revision', 'draft'))
     check_draft(data['draft'])
     with db:
         db.execute('BEGIN IMMEDIATE')
         number, _, questions = check_revisions(db, bid, data)
+        source_revision = check_source(db, bid, data, allow_stale=True)
         if data['draft'] is not None and contact_excluded(db, bid):
             raise ValueError('Contact-excluded businesses cannot be investigated')
-        write_state(db, bid, number + 1, data['draft'], questions)
-    return dict(review_revision=revision(db, bid), draft_revision=number + 1, draft=data['draft'])
+        write_state(db, bid, number + 1, data['draft'], questions, source_revision)
+    return dict(review_revision=revision(db, bid), draft_revision=number + 1, draft=data['draft'],
+                source_revision=changes.source_revision(db, bid), draft_source_revision=source_revision,
+                source_changed=bool(data['draft'] and source_revision != changes.source_revision(db, bid)))
 
 
 def commit(db, bid, data, business):
-    checked_keys(data, ('review_revision', 'draft_revision', 'request_id', 'questions'),
+    checked_keys(data, ('review_revision', 'draft_revision', 'source_revision', 'request_id', 'questions'),
                  ('review_revision', 'draft_revision', 'request_id', 'questions'))
     request_id = data['request_id']
     if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
@@ -162,6 +199,7 @@ def commit(db, bid, data, business):
     check_questions(data['questions'])
     data_version = db.execute('PRAGMA data_version').fetchone()[0]
     number, draft, questions = check_revisions(db, bid, data)
+    source_revision = check_source(db, bid, data)
     if 'suppressed_or_contacted' in business['excluded_reasons']:
         raise ValueError('Contact-excluded businesses cannot be investigated')
     session_id = secrets.token_hex(16)
@@ -183,12 +221,13 @@ def commit(db, bid, data, business):
                 changes['queue_hold'] = True
             result_review = core.review(staged, bid, changes)
         final_revision = revision(staged, bid)
-        result = dict(review_revision=final_revision, draft_revision=number + 1, session_id=session_id, review=result_review)
+        result = dict(review_revision=final_revision, draft_revision=number + 1, session_id=session_id, review=result_review,
+                      source_revision=source_revision, source_changed=False)
         with staged:
-            write_state(staged, bid, number + 1, None, {**questions, **data['questions']})
-            staged.execute('INSERT INTO investigation_sessions VALUES(?,?,?,?,?,?,?,?,?,?,0)',
+            write_state(staged, bid, number + 1, None, {**questions, **data['questions']}, source_revision)
+            staged.execute('INSERT INTO investigation_sessions VALUES(?,?,?,?,?,?,?,?,?,?,0,?)',
                            (session_id, bid, request_id, payload, encoded(result), encoded(before_review),
-                            encoded(questions), encoded(data['questions']), encoded(draft), final_revision))
+                            encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision))
         # Publish the staged delta in one live transaction. Holding SQLite's
         # writer lock and checking data_version also protects against a second
         # server/CLI writer. Never overwrite their imports or suppressions with
@@ -203,14 +242,15 @@ def commit(db, bid, data, business):
             if db.execute('PRAGMA data_version').fetchone()[0] != data_version:
                 raise Conflict('Workspace changed while saving; reload before retrying')
             check_revisions(db, bid, data)
+            check_source(db, bid, data)
             if contact_excluded(db, bid):
                 raise ValueError('Contact-excluded businesses cannot be investigated')
             db.executemany('INSERT INTO reviews(id,business_id,created_at,data) VALUES(?,?,?,?)',
                            [tuple(row) for row in staged.execute('SELECT * FROM reviews WHERE id>? ORDER BY id', (first_new_id,))])
-            write_state(db, bid, number + 1, None, {**questions, **data['questions']})
-            db.execute('INSERT INTO investigation_sessions SELECT ?,?,?,?,?,?,?,?,?,?,0',
+            write_state(db, bid, number + 1, None, {**questions, **data['questions']}, source_revision)
+            db.execute('INSERT INTO investigation_sessions SELECT ?,?,?,?,?,?,?,?,?,?,0,?',
                        (session_id, bid, request_id, payload, encoded(result), encoded(before_review),
-                        encoded(questions), encoded(data['questions']), encoded(draft), final_revision))
+                        encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision))
     return result
 
 
@@ -238,6 +278,12 @@ def undo(db, bid, data, business):
                      mode=previous_draft['mode'] if previous_draft else 'workspace',
                      questions={**json.loads(row['submitted']), **(current_draft['questions'] if current_draft else {})})
         db.execute('INSERT INTO reviews(business_id,created_at,data) VALUES(?,?,?)', (bid, recorded, encoded(restored)))
-        write_state(db, bid, number + 1, draft, json.loads(row['before_questions']))
+        restored_source = draft_source(db, bid) if current_draft else row['source_revision']
+        # A newer draft may override some submitted questions, but cannot certify
+        # the source context of older answers restored alongside it.
+        session_contributes = any(q not in (current_draft or {}).get('questions', {}) for q in json.loads(row['submitted']))
+        if session_contributes and row['source_revision'] != changes.source_revision(db, bid):
+            restored_source = row['source_revision']
+        write_state(db, bid, number + 1, draft, json.loads(row['before_questions']), restored_source)
         db.execute('UPDATE investigation_sessions SET undone=1 WHERE session_id=?', (row['session_id'],))
     return dict(review_revision=revision(db, bid), draft_revision=number + 1, review={**restored, 'created_at': recorded})

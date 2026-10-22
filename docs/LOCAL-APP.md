@@ -13,9 +13,22 @@ On first launch, try the fictional demo or import your own permitted file. The a
 1. Choose a UTF-8 CSV, JSON array or JSONL file, or paste its contents. Select canonical fields, saved Overture data or saved OSM/Overpass data as appropriate. The app does not acquire listings.
 2. Preview the file. For canonical input, map columns to the displayed fields. Required identity/location fields must be supplied; IDs, geography and observation dates are not invented. CSV list fields use `|`. Inspect errors, skipped rows and normalized samples before proceeding. Any invalid canonical row blocks the import.
 3. Record the source, license, terms URL, attribution and date the rights were reviewed. Explicitly confirm permission to retain, export and use the data for discovery. Supply applicable license/notice text for non-synthetic sources. These declarations record your decision; the app cannot determine the permissions for you.
-4. Confirm the import. Businesses, source hashes, mappings and rights are saved together. Preview alone does not change the queue. Reimport appends evidence and batches even when strong identity matches keep the same business IDs.
+4. Compare the import after supplying its source name. Inspect counts of new businesses, changed existing businesses, unchanged rows, additional source identities and identity warnings before confirming. A source or workspace change invalidates the comparison and requires a fresh comparison. Preview alone does not change the queue.
+5. Confirm the import. Businesses, source hashes, mappings, rights and change events are saved together. Reimport appends evidence and batches even when strong identity matches keep the same business IDs. Choose **Review changes** or return to the normal queue.
 
 There is an 8 MiB request limit, a maximum of 5,000 source rows per import and 20,000 business identities per workspace. Split larger permitted datasets before import. The [reference](REFERENCE.md) documents input formats, adapters and identity rules.
+
+## Changes and evidence reminders
+
+**Changes** groups attention by business, with Pending, Seen and All filters and a filter for existing review work. It compares the incoming observation with the preceding observation for the same source identity, showing the source links, batch references and observation dates. New source identities are additional evidence; disagreements are labeled separately. New businesses remain ordinary review-queue work.
+
+Website/profile, identity/contact, location, activity and category/brand changes can prompt investigation. Harmless formatting and list ordering do not create new alerts. A value no longer supplied in an import does not retract historical evidence; a missing business does not mean it closed. The business display and screening continue to retain historical website/contact signals. Older incoming evidence is labeled and never becomes fresh merely because it was imported today.
+
+**Mark seen** acknowledges one reason; **Restore** returns it to pending. These actions do not save a review, refresh evidence or clear exclusions. Identical imports do not repeat alerts; a later meaningful change, including a reversion, can create a new alert. Saving a question does not silently acknowledge all imported changes. **Investigate** opens the existing desk at the affected question, with a return path to Changes and its filters.
+
+Saved questions also show **Old evidence** or **Evidence date/basis unknown**. Activity uses the existing activity freshness setting. Identity, website and service fit use a separate **Advisory review window**, default 180 days, which does not change qualification. Reminders are calculated when the inbox is opened/refreshed; there are no scheduled rechecks. Unknown or never-recorded dates are not treated as recent. Never-reviewed questions do not generate aging reminders. Marking a reminder seen does not reverify anything.
+
+Older CLI reviews may lack a provable connection between a carried answer and a particular evidence date. These display an unknown basis rather than borrowing a newer answer's date. Research cards whose business context changed also appear as attention; formatting changes alone do not invalidate their context. No page is fetched automatically.
 
 ## Review the queue
 
@@ -32,6 +45,8 @@ Guided review presents one question group at a time, with the same underlying ev
 Unfinished answers are saved as drafts inside the workspace, separately from review history. Switching business or view retains them, and saved drafts survive an app restart. Watch the draft status: a failed save must be retried before closing the app. Drafts do not affect qualification or appear in exports. Deferring a business keeps its draft without recording a review.
 
 If another tab or the CLI changes a review, stale edits are rejected rather than silently replacing newer decisions. Your unfinished input remains available so you can compare it with the latest saved record before retrying. Use one running app process per workspace; revision checks do not turn this into a shared multi-user service.
+
+A material reimport also marks existing drafts as based on changed source evidence. Inspect the updated observations and use **Review updated evidence** before saving a decision. Your unfinished text remains intact. Undo retains the source context of restored answers, even when newer draft questions are present. Equivalent formatting-only imports do not require this step.
 
 Undo is available for the latest untouched investigation save. It appends a compensating history record and restores the submitted answers as a draft. It does not delete original observations, previous reviews or contact exclusions. Previously confirmed website evidence may continue to exclude a business under the existing conservative rules. A later review makes the older save ineligible for undo.
 

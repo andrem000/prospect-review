@@ -122,6 +122,29 @@ def verify():
             restored_research = request(base + '/research')['records']
             assert len(restored_research) == 1 and restored_research[0]['id'] == captured['id']
             assert restored_research[0]['dismissed'] is True
+            # The installed change inbox must share core reimport semantics and
+            # retain the existing saved review/draft after adding new evidence.
+            prior = request(base)
+            observation = dict(prior['observations'][0])
+            source_name = observation.pop('source')
+            observation.pop('batch_id', None)
+            observation['websites'] = ['https://installed-change.example']
+            preview = request('/api/import/preview', {'filename': 'installed-change.json',
+                'content': json.dumps([observation]), 'adapter': 'canonical'})
+            compared = request('/api/import/compare', {'preview_id': preview['preview_id'], 'source': source_name})
+            assert compared['summary']['changed_businesses'] == 1
+            rights = {'source': source_name, 'license': 'synthetic', 'terms_url': 'https://example.com/synthetic',
+                'attribution': 'Installed synthetic check', 'reviewed_at': '2026-01-01',
+                'retention_permitted': True, 'export_permitted': True, 'lead_discovery_permitted': True}
+            request('/api/import/commit', {'preview_id': preview['preview_id'],
+                'comparison_id': compared['comparison_id'], 'rights': rights})
+            assert request(base)['review'] == prior['review']
+            assert request(base + '/investigation')['source_changed']
+            item = next(item for item in request('/api/changes')['items'] if item['business_id'] == record['id'])
+            reason = next(reason for reason in item['reasons'] if reason['id'].startswith('change:'))
+            request('/api/changes/seen', {'reason_ids': [reason['id']], 'seen': True})
+            item = next(item for item in request('/api/changes')['items'] if item['business_id'] == record['id'])
+            assert next(r for r in item['reasons'] if r['id'] == reason['id'])['seen']
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -129,7 +152,9 @@ def verify():
                     'installed_review_retry_idempotency': True,
                     'installed_research_capture_and_retry': True,
                     'installed_research_separate_from_reviews_exports': True,
-                    'installed_research_dismissal_restart': True}
+                    'installed_research_dismissal_restart': True,
+                    'installed_change_comparison_and_triage': True,
+                    'installed_reimport_preserves_review_and_draft': True}
         finally:
             server.shutdown()
             server.server_close()

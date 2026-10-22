@@ -38,7 +38,7 @@ jobs:
       - name: Unit and regression tests
         run: python -m unittest discover -s tests -v
       - name: Browser state regressions
-        run: node --test tests/test_frontend_state.js tests/test_research_frontend.js
+        run: node --test tests/test_frontend_state.js tests/test_research_frontend.js tests/test_changes_frontend.js
       - name: Source checkout demo
         run: python demo.py
       - name: Build wheel
