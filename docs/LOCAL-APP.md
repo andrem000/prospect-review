@@ -21,7 +21,19 @@ There is an 8 MiB request limit, a maximum of 5,000 source rows per import and 2
 
 Search by business name, city or address; combine state, trade, website, review-status and queue filters. Candidate, qualified and excluded views reflect the existing screening rules. A missing website field is a signal to investigate, not proof that a website is absent.
 
-Open a business to inspect observations, machine reasons, source information and review history. Save only decisions you actually checked, with the evidence URL, notes and the date you observed it. Dates are never automatically filled with today's date.
+Open a business in the Investigation desk. The queue, source evidence and decision area stay together. The four question groups are identity, website, activity and service fit. Inspect original observations, machine reasons, source information and review history alongside the question you are answering. A conflicting identity judgment records a hold; it never automatically merges or splits businesses.
+
+Save only the question you actually checked, with its evidence URL, notes and observation date. Dates are never automatically filled with today's date. Recording an uncertain result still requires the source you checked and when you checked it. If you cannot yet provide that basis, keep the unfinished draft or defer the business.
+
+## Guided review and drafts
+
+Guided review presents one question group at a time, with the same underlying evidence and decisions as the desk. Move between questions, skip questions you did not check, and inspect the summary before saving. Edit any proposed answer from the summary. Only newly checked or edited questions are committed; untouched previous decisions remain unchanged. Every supplied question is validated before the whole session is saved.
+
+Unfinished answers are saved as drafts inside the workspace, separately from review history. Switching business or view retains them, and saved drafts survive an app restart. Watch the draft status: a failed save must be retried before closing the app. Drafts do not affect qualification or appear in exports. Deferring a business keeps its draft without recording a review.
+
+If another tab or the CLI changes a review, stale edits are rejected rather than silently replacing newer decisions. Your unfinished input remains available so you can compare it with the latest saved record before retrying. Use one running app process per workspace; revision checks do not turn this into a shared multi-user service.
+
+Undo is available for the latest untouched investigation save. It appends a compensating history record and restores the submitted answers as a draft. It does not delete original observations, previous reviews or contact exclusions. Previously confirmed website evidence may continue to exclude a business under the existing conservative rules. A later review makes the older save ineligible for undo.
 
 A later website correction preserves other decisions. Previously recorded activity keeps its original evidence date unless you change the activity decision or explicitly record a new activity check. Recording a review today does not make old evidence current. Contacted decisions add durable exclusions; changing a later review does not erase those controls.
 

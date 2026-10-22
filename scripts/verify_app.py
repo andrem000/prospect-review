@@ -45,13 +45,64 @@ def verify():
                 'evidence_url': 'https://example.com/installed-app-test',
                 'notes': 'SIMULATED installed app check; no real business reviewed.'}})
             assert request('/api/businesses/' + str(record['id']))['review_history_count'] == 1
+            # Exercise the new module from the wheel, not the source checkout.
+            base = '/api/businesses/' + str(record['id'])
+            investigation = request(base + '/investigation')
+            questions = {
+                'identity': {'identity_status': 'same_business',
+                             'evidence_url': 'https://example.com/fictional-identity',
+                             'evidence_observed_at': '2026-10-14',
+                             'notes': 'SIMULATED: matching fictional name and address.'},
+                'activity': {'activity': 'active',
+                             'evidence_url': 'https://example.com/fictional-activity',
+                             'evidence_observed_at': '2026-10-15',
+                             'notes': 'SIMULATED: fictional service update.'}}
+            draft = {'mode': 'guided', 'step': 2, 'questions': questions}
+            saved_draft = request(base + '/draft', {
+                'review_revision': investigation['review_revision'],
+                'draft_revision': investigation['draft_revision'], 'draft': draft})
+            assert request(base + '/investigation')['draft'] == draft
+            payload = {'review_revision': saved_draft['review_revision'],
+                       'draft_revision': saved_draft['draft_revision'],
+                       'request_id': 'installed-guided-review', 'questions': questions}
+            committed = request(base + '/investigation', payload)
+            assert request(base + '/investigation', payload) == committed
+            assert request(base)['review_history_count'] == 3
+            assert request(base + '/investigation')['draft'] is None
+            correction = request(base + '/investigation', {
+                'review_revision': committed['review_revision'],
+                'draft_revision': committed['draft_revision'],
+                'request_id': 'installed-website-correction',
+                'questions': {'website': {
+                    'website_status': 'uncertain',
+                    'evidence_url': 'https://example.com/fictional-website',
+                    'evidence_observed_at': '2026-10-16',
+                    'notes': 'SIMULATED: website-only correction.'}}})
+            assert request(base)['review']['activity_evidence_observed_at'] == '2026-10-15'
+            request(base + '/investigation/undo', {
+                'session_id': correction['session_id'],
+                'review_revision': correction['review_revision']})
+            assert request(base)['review']['activity_evidence_observed_at'] == '2026-10-15'
+            assert request(base + '/investigation')['draft'] is not None
             exported = request('/api/exports', {'ids': queue['matching_ids'], 'format': 'csv'})
             with zipfile.ZipFile(io.BytesIO(request(exported['download_url']))) as bundle:
                 assert set(bundle.namelist()) == {'businesses.csv', 'businesses.csv.provenance.json'}
                 assert json.loads(bundle.read('businesses.csv.provenance.json'))['sources']
             assert request('/api/state')['exports'][0]['id'] == exported['id']
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=10)
+            server = create_server(workspace, port=0)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            token = server.app.token
+            assert request(base + '/investigation')['draft'] is not None
+            assert request(base)['review']['activity_evidence_observed_at'] == '2026-10-15'
             return {'installed_app_http': True, 'bundled_web_assets': True,
-                    'app_demo_review_filtered_export': True}
+                    'app_demo_review_filtered_export': True,
+                    'installed_investigation_draft_restart': True,
+                    'installed_guided_review_and_undo': True,
+                    'installed_review_retry_idempotency': True}
         finally:
             server.shutdown()
             server.server_close()

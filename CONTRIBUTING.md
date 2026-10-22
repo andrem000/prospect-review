@@ -1,17 +1,22 @@
 # Contributing
 
-Use Python 3.10 or newer. The runtime and tests use the standard library; no service credentials or business dataset are needed.
+Use Python 3.10 or newer. The Python runtime and tests use the standard library; no service credentials or business dataset are needed.
 
 ```sh
 git clone https://github.com/andrem000/prospect-review.git
 cd prospect-review
 python -m unittest discover -s tests -v
+node --test tests/test_frontend_state.js
 python demo.py --out contribution-demo
 ```
 
 Use a fresh demo output directory. For installed-command changes, also create a virtual environment, run `python -m pip install .`, change to a directory outside the checkout and run `prospect-review demo --out <new-directory>`. Do not substitute an editable installation for that packaging check.
 
+The frontend state regression tests use Node.js 20 or newer with its built-in test runner and no packages. Node is a development/test tool only; running the app still requires only Python and a browser.
+
 For app changes, run `python -m prospect app --workspace <new-directory>` and exercise import, review, filtering and export in a browser with fictional data. Check keyboard navigation and a narrow window. Build a wheel and run `python scripts/verify_install.py --wheel-dir <wheel-directory>` to verify the packaged app and CLI from an isolated installation. Do not commit test workspaces or generated exports.
+
+For investigation changes, also check drafts across business switches and restart, guided summary/edit/defer, invalid evidence, a stale second tab, repeated saves and undo. A website-only correction must retain the activity observation date. An incomplete or failed guided save must not change any saved decisions; drafts must not appear in exports. Keep durable contact exclusions and original source history intact.
 
 ## Report a problem
 

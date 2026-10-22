@@ -28,6 +28,10 @@ Each workspace owns its SQLite database, configuration, imported source material
 
 Manual updates preserve omitted decision fields; an explicit `--replace` starts from defaults without erasing history. Each review has its actual recording time and a supplied observation date. Carried activity retains a separate evidence snapshot so a website-only correction cannot refresh it. Current-operation assessment uses that activity observation date and the configured `freshness_days` window. Legacy reviews without dated activity evidence remain unverified; their recording timestamp is not a substitute.
 
+Investigation drafts are separate from saved reviews. Each checked question has its own evidence URL, notes and observation date. A guided save validates and stages every supplied question before changing the live workspace; skipped questions preserve their prior decisions. Review and draft revisions detect stale edits, including reviews made through the CLI or the earlier review endpoint. A request identifier prevents an identical retry from appending duplicate history.
+
+Undo appends a compensating record for the latest untouched investigation session. It restores prior effective decisions and activity evidence without deleting history or exclusions; a previously confirmed website can therefore remain excluded under the existing historical-evidence rules. Identity questions record a human judgment without merging or splitting businesses. A conflicting-identity judgment places the record on hold for further investigation.
+
 ## Screening
 
 The score sums website-gap, identity/contact, trade and activity components. It prioritizes inspection rather than estimating conversion probability. Listed dedicated websites are excluded from the website-gap queue. Social profiles, directories, shorteners and possible hosted websites have distinct treatment. An evidence-backed human finding is needed to confirm a provider-hosted site or mark a reviewed website search as `no_site_found`.

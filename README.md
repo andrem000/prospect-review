@@ -16,11 +16,11 @@ python -m prospect app
 
 Use `python3` if that is your Python 3 command. Your browser opens the app; keep the terminal running and press **Ctrl+C** there to stop it. No installation is needed. Choose **Try fictional demo** for a safe first look, or import a file you have permission to use.
 
-The app previews and maps CSV/JSON/JSONL files, records source permissions, shows a searchable review queue and evidence history, and exports selected or filtered records with their provenance in a ZIP. Reviews, settings and exports persist in `prospect-review-workspace/`. Launch from the same directory to resume, or use `--workspace /path/to/workspace` to choose another workspace.
+The app previews and maps CSV/JSON/JSONL files, records source permissions, and opens an Investigation desk with a searchable business queue, source evidence and explicit decisions. Guided review walks through identity, website, activity and service fit, then shows an editable summary before saving. Export selected or filtered records with their provenance in a ZIP. Reviews, unfinished drafts, settings and exports persist in `prospect-review-workspace/`. Launch from the same directory to resume, or use `--workspace /path/to/workspace` to choose another workspace.
 
 Everything runs on your machine, with no accounts, external assets or runtime dependencies. The server listens only on `127.0.0.1`; it is intended for a single local user. [The local app guide](docs/LOCAL-APP.md) covers the complete workflow, backups and limits. The existing CLI remains available.
 
-![Prospect Review local app showing its fictional demo queue and evidence panel](docs/images/local-app.png)
+![Prospect Review Investigation desk showing a fictional business, dated source evidence and a question-specific decision](docs/images/local-app.png)
 
 *Fictional demo records; no real businesses were researched or contacted.*
 

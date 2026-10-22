@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 — Unreleased
+
+- Add an Investigation desk with a business queue, readable source evidence and separate identity, website, activity and service-fit questions.
+- Add guided review with question navigation, deferral, an editable summary and an atomic save of the questions actually checked.
+- Keep unfinished drafts in the local workspace across navigation and restarts, separately from saved decisions and exports.
+- Attach evidence to each checked question; website corrections preserve the original activity evidence date.
+- Detect stale edits, make session retries idempotent and allow undoing the latest untouched investigation save by appending a compensating review.
+- Preserve original observations, prior reviews and durable contact exclusions. Research assistance remains outside this release.
+
 ## 0.2.0 — 2026-10-22
 
 - Add a bundled local browser app launched with `prospect-review app`, with no third-party runtime dependencies or external assets.

@@ -19,7 +19,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import core, __version__
+from . import core, investigation, __version__
 from .providers import ADAPTERS
 
 MAX_BODY = 8 * 1024 * 1024
@@ -107,6 +107,7 @@ class Application:
         self.default['regions'] = []
         self.default.pop('as_of', None)
         with closing(core.connect(self.dbpath)) as db:
+            investigation.initialize(db)
             db.execute('CREATE TABLE IF NOT EXISTS app_exports(id TEXT PRIMARY KEY, data TEXT NOT NULL)')
             db.commit()
             if not self.configpath.exists():
@@ -270,6 +271,24 @@ class Application:
                 return {'metrics': core.suppress(db, temporary)}
             finally:
                 temporary.unlink(missing_ok=True)
+        investigation_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/(investigation(?:/undo)?|draft)', path)
+        if investigation_route:
+            bid, operation = int(investigation_route[1]), investigation_route[2]
+            if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
+                raise LookupError('Business not found')
+            business = next(b for b in self.evaluated(db) if b['id'] == bid)
+            if method == 'GET' and operation == 'investigation':
+                return investigation.read(db, bid, business)
+            if method == 'POST':
+                if operation == 'draft':
+                    if data.get('draft') is not None and 'suppressed_or_contacted' in business['excluded_reasons']:
+                        raise ValueError('Contact-excluded businesses cannot be investigated')
+                    return investigation.save_draft(db, bid, data)
+                if operation == 'investigation':
+                    return investigation.commit(db, bid, data, business)
+                if operation == 'investigation/undo':
+                    return investigation.undo(db, bid, data, business)
+            raise LookupError('Route not found')
         match = re.fullmatch(r'/api/businesses/([1-9][0-9]*)(/review)?', path)
         if match:
             bid = int(match[1])
@@ -426,6 +445,8 @@ class Handler(BaseHTTPRequestHandler):
             if name == 'index.html':
                 asset = asset.replace(b'__SESSION_TOKEN__', app.token.encode('ascii'))
             self.reply(200, asset, mimetypes.guess_type(name)[0] + '; charset=utf-8')
+        except investigation.Conflict as exc:
+            self.reply(409, _json({'error': str(exc)}))
         except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, OverflowError, RecursionError) as exc:
             self.reply(400, _json({'error': str(exc) or 'Invalid request'}))
         except (LookupError, FileNotFoundError):

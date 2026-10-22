@@ -4,6 +4,7 @@
   const token = $('meta[name="session-token"]').content;
   const content = $('#content');
   const S = {view:'queue', state:null, list:null, selected:new Set(), detail:null, dirty:false, offset:0, limit:25, filters:{q:'',state:'',trade:'',review:'all',website:'',queue:'candidates',sort:'score'}, importing:{step:1,filename:'',content:'',adapter:'canonical',preview:null,rights:{},notice:''}};
+  let detailSerial=0, noticeGeneration=0;
   let requestSerial = 0, fieldSerial = 0, searchTimer, pendingNavigation;
   const el = (tag, cls, text) => { const n=document.createElement(tag); if(cls)n.className=cls; if(text!==undefined)n.textContent=String(text); return n; };
   const append = (parent, ...nodes) => { nodes.flat().filter(Boolean).forEach(n=>parent.append(n)); return parent; };
@@ -12,9 +13,9 @@
   const listValue = v => Array.isArray(v)?v.join(' · '):String(v??'');
   const dateText = v => v ? String(v).replace('T',' ').replace(/\.\d+/, '').replace('+00:00',' UTC') : 'Not recorded';
   function link(url, label=url) { try { const u=new URL(url); if(!['http:','https:'].includes(u.protocol))return el('span','',label); const a=el('a','',label); a.href=u.href; a.target='_blank'; a.rel='noopener noreferrer'; return a; } catch {return el('span','',label||'Not supplied');} }
-  function notice(message, error=false) { const n=$('#notice'); n.textContent=message; n.className=error?'error':''; n.hidden=false; }
-  function fail(error) { notice(error.message || 'Something went wrong. Please try again.',true); }
-  async function api(path, body, binary=false) { const options={headers:{'X-Prospect-Token':token}}; if(body!==undefined){options.method='POST'; options.headers['Content-Type']='application/json'; options.body=JSON.stringify(body);} const response=await fetch(path,options); if(!response.ok){let message=`Request failed (${response.status}).`; try{message=(await response.json()).error||message;}catch{} throw new Error(message);} return binary?response.blob():response.json(); }
+  function notice(message, error=false) { const n=$('#notice'); n.textContent=message; n.className=error?'error':''; n.hidden=false;return ++noticeGeneration; }
+  function fail(error) { return notice(error.message || 'Something went wrong. Please try again.',true); }
+  async function api(path, body, binary=false) { const options={headers:{'X-Prospect-Token':token}}; if(body!==undefined){options.method='POST'; options.headers['Content-Type']='application/json'; options.body=JSON.stringify(body);} const response=await fetch(path,options); if(!response.ok){let message=`Request failed (${response.status}).`; try{message=(await response.json()).error||message;}catch{} const error=new Error(message);error.status=response.status;throw error;} return binary?response.blob():response.json(); }
   async function busy(b, work, label='Working…') { if(b.disabled)return; const original=b.textContent; b.disabled=true; b.textContent=label; try {await work();} catch(e){fail(e);} finally{b.disabled=false;b.textContent=original;} }
   function field(label, node, hint) { const wrap=el('div','field'),caption=el('label','',label);node.id=node.id||`field-${++fieldSerial}`;caption.htmlFor=node.id;append(wrap,caption,node);if(hint){const help=el('span','hint',hint);help.id=`${node.id}-hint`;node.setAttribute('aria-describedby',help.id);append(wrap,help);}return wrap; }
   function input(type, value='', required=false) {const n=el('input');n.type=type;n.value=value??'';n.required=required;return n;}
@@ -23,27 +24,90 @@
   function heading(title, subtitle, actions) {return append(el('div','page-heading'),append(el('div'),el('p','eyebrow','PROSPECT REVIEW'),el('h1','',title),el('p','subtitle',subtitle)),actions);}
   function panel(title, body, extra) {const p=el('section','panel');if(title)append(p,append(el('div','panel-heading'),el('h2','',title),extra));append(p,append(el('div','panel-body'),body));return p;}
   function jsonDetails(title,value) {const d=el('details');append(d,el('summary','',title),el('pre','',JSON.stringify(value,null,2)));return d;}
-  function guard(fn) { if(S.reviewSaving){notice('Your review is saving. Please wait before changing views.');return;}if(!S.dirty){fn();return;} pendingNavigation=fn; $('#confirm-dialog').showModal(); }
+  function guard(fn) { if(S.investigation && !S.advancedDirty){
+    if(S.reviewSaving || S.navigating){notice('Your work is saving. Please wait.');return;}
+    S.navigating=true;
+    persistDraft().then(()=>{resolveDeskNotice('Draft saved locally.');return fn();}).catch(showDeskError).finally(()=>{S.navigating=false;});
+    return;
+  } if(S.reviewSaving){notice('Your review is saving. Please wait before changing views.');return;}if(!S.dirty){fn();return;} pendingNavigation=fn; $('#confirm-dialog').showModal(); }
   $('#keep-editing').addEventListener('click',()=>{$('#confirm-dialog').close();pendingNavigation=null;});
-  $('#discard-editing').addEventListener('click',()=>{$('#confirm-dialog').close();S.dirty=false;const fn=pendingNavigation;pendingNavigation=null;if(fn)fn();});
+  $('#discard-editing').addEventListener('click',()=>{$('#confirm-dialog').close();S.dirty=false;S.advancedDirty=false;const fn=pendingNavigation;pendingNavigation=null;if(fn)fn();});
   window.addEventListener('beforeunload',e=>{if(S.dirty){e.preventDefault();e.returnValue='';}});
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>guard(()=>navigate(b.dataset.view))));
   async function state() {S.state=await api('/api/state');$('#version').textContent=`Version ${S.state.version}`;$('#workspace-name').textContent=S.state.workspace||'Local workspace';}
-  function navigate(view) { S.view=view;S.detail=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
+  function navigate(view) { S.view=view;detailSerial++;S.detail=null;S.investigation=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
   function render() {content.replaceChildren(); if(!S.state)return; if(S.view==='queue')renderQueue();if(S.view==='import')renderImport();if(S.view==='exports')renderExports();if(S.view==='settings')renderSettings();}
   function stats() {const box=el('div','stats');[['total','Businesses'],['candidates','Candidates'],['reviewed','Reviewed'],['qualified','Qualified'],['excluded','Excluded']].forEach(([key,label])=>append(box,append(el('div',`stat ${key==='candidates'?'featured':''}`),el('strong','',S.state.counts[key]??0),el('span','',label))));return box;}
-  function renderQueue() {append(content,heading('Review queue','Turn listing signals into careful, evidence-backed decisions.',append(el('div','actions'),button('Import data',()=>guard(()=>navigate('import')),'primary'))),stats()); if(!S.state.counts.total){append(content,panel('',append(el('div','empty'),el('div','empty-icon','↥'),el('h2','','A clear workspace. A careful start.'),el('p','','Import a permitted dataset to begin reviewing businesses, or explore the workflow with fictional examples.'),append(el('div','actions'),button('Import a file',()=>navigate('import'),'primary'),button('Try fictional demo',e=>busy(e.currentTarget,async()=>{await api('/api/demo',{});await state();notice('Fictional examples loaded. No businesses have been researched or contacted.');render();},'Loading demo…'))),el('p','small','Local files only · No accounts · No data uploads'))));return;}
-    const layout=el('div',`queue-layout ${S.detail?'with-detail':''}`),queue=el('section','panel queue-panel'); append(content,layout);append(layout,queue);
-    const filters=el('div','filters'); const q=input('search',S.filters.q);q.placeholder='Search name, city or address';q.addEventListener('input',()=>{S.filters.q=q.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{S.offset=0;loadList(queue);},250);});append(filters,field('Search businesses',q));
-    for(const [key,label,values] of [['queue','Queue',[['candidates','Candidates'],['all','All businesses'],['qualified','Qualified'],['excluded','Excluded audit']]],['state','State',[]],['trade','Trade',[]]]){const n=select(key==='queue'?values:[['',`All ${label.toLowerCase()}s`]],S.filters[key]);n.dataset.filter=key;n.addEventListener('change',()=>{S.filters[key]=n.value;S.offset=0;loadList(queue);});append(filters,field(label,n));}
-    append(queue,filters);const secondary=el('div','filter-secondary');for(const [key,label,values] of [['review','Review',[['all','Any review state'],['unreviewed','Unreviewed'],['reviewed','Reviewed']]],['website','Website signal',[['','Any website signal']]],['sort','Sort',[['score','Highest priority'],['name','Business name'],['recent','Recent evidence']]]]){const n=select(values,S.filters[key]);n.dataset.filter=key;n.addEventListener('change',()=>{S.filters[key]=n.value;S.offset=0;loadList(queue);});append(secondary,field(label,n));}append(secondary,el('span','small','Priority is a heuristic, not verified absence.'));append(queue,secondary,el('div','queue-results'));if(S.detail)append(layout,renderDetail(S.detail));loadList(queue);
+  function queueFilterSummary(total) {
+    const filters=[human(S.filters.queue)];
+    for(const key of ['q','state','trade','website'])if(S.filters[key])filters.push(key==='q'?'“'+S.filters[key]+'”':human(S.filters[key]));
+    if(S.filters.review!=='all')filters.push(human(S.filters.review));
+    return filters.join(' · ')+(total===undefined?'':' · '+total+' businesses');
   }
-  async function loadList(queue) {const serial=++requestSerial;const results=$('.queue-results',queue);if(!results)return;if(!results.children.length)results.append(el('p','loading','Loading businesses…'));results.setAttribute('aria-busy','true');const params=new URLSearchParams({...S.filters,offset:String(S.offset),limit:String(S.limit)});try{const data=await api(`/api/businesses?${params}`);if(serial!==requestSerial)return;S.list=data;for(const [key,facet] of [['state','states'],['trade','trades'],['website','websites']]){const n=$(`[data-filter="${key}"]`,queue);if(!n)continue;const options=[['',key==='website'?'Any website signal':`All ${key}s`],...(data.facets?.[facet]||[])];if(S.filters[key]&&!options.some(o=>(Array.isArray(o)?o[0]:o)===S.filters[key]))options.push(S.filters[key]);const replacement=select(options,S.filters[key]);n.replaceChildren(...Array.from(replacement.children));n.value=S.filters[key];}renderRows(results,data);}catch(e){if(serial!==requestSerial)return;results.replaceChildren(append(el('div','empty'),el('h3','','Could not load the queue'),el('p','',e.message),button('Try again',()=>loadList(queue))));}finally{if(serial===requestSerial)results.removeAttribute('aria-busy');}}
-  function renderRows(target,data) {target.replaceChildren(); const bar=el('div','selection-bar');const count=el('span','small',`${S.selected.size} selected`);append(bar,count,button('Select all filtered',()=>{data.matching_ids.forEach(id=>S.selected.add(id));renderRows(target,data);}),button('Clear',()=>{S.selected.clear();renderRows(target,data);}),button('Export selected',()=>exportPrompt(Array.from(S.selected)),'primary'));bar.lastChild.disabled=!S.selected.size;append(target,bar);if(S.filters.queue==='excluded')append(target,el('p','callout warning','Excluded audit: these businesses are held or excluded from the candidate queue. Export does not clear contact restrictions.'));
+
+  function renderQueue() {
+    const guided=Boolean(S.detail && S.investigation?.mode==='guided');
+    append(content,heading(guided?'Guided review':S.detail?'Investigation desk':'Review queue',guided?'One business. Four questions. Save only the evidence you checked.':'Turn listing signals into careful, evidence-backed decisions.',guided?null:append(el('div','actions'),button('Import data',()=>guard(()=>navigate('import')),'primary'))));
+    if(!guided)append(content,stats());
+    if(!S.state.counts.total){
+      append(content,panel('',append(el('div','empty'),el('div','empty-icon','↥'),el('h2','','A clear workspace. A careful start.'),el('p','','Import a permitted dataset to begin reviewing businesses, or explore the workflow with fictional examples.'),append(el('div','actions'),button('Import a file',()=>navigate('import'),'primary'),button('Try fictional demo',e=>busy(e.currentTarget,async()=>{await api('/api/demo',{});await state();notice('Fictional examples loaded. No businesses have been researched or contacted.');render();},'Loading demo…'))),el('p','small','Local files only · No accounts · No data uploads'))));return;
+    }
+    const layout=el('div','queue-layout'+(S.detail?' with-detail':'')+(guided?' guided-layout':''));
+    const queue=el('section','panel queue-panel');
+    append(content,layout);append(layout,queue);
+    let filterContainer=queue;
+    if(S.detail){
+      const summary=el('p','queue-summary',queueFilterSummary());summary.dataset.queueSummary='';summary.setAttribute('aria-live','polite');
+      const details=el('details','queue-filters');details.open=Boolean(S.queueFiltersOpen);
+      details.addEventListener('toggle',()=>{S.queueFiltersOpen=details.open;});
+      append(details,el('summary','','Queue filters'));
+      append(queue,append(el('div','desk-queue-heading'),el('h2','','Business queue'),summary),details);
+      filterContainer=details;
+    }
+    const filters=el('div','filters');
+    const q=input('search',S.filters.q);q.placeholder='Search name, city or address';
+    q.addEventListener('input',()=>{S.filters.q=q.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{S.offset=0;loadList(queue);},250);});
+    append(filters,field('Search businesses',q));
+    for(const [key,label,values] of [['queue','Queue',[['candidates','Candidates'],['all','All businesses'],['qualified','Qualified'],['excluded','Excluded audit']]],['state','State',[]],['trade','Trade',[]]]){
+      const node=select(key==='queue'?values:[['','All '+label.toLowerCase()+'s']],S.filters[key]);node.dataset.filter=key;
+      node.addEventListener('change',()=>{S.filters[key]=node.value;S.offset=0;loadList(queue);});append(filters,field(label,node));
+    }
+    const secondary=el('div','filter-secondary');
+    for(const [key,label,values] of [['review','Review',[['all','Any review state'],['unreviewed','Unreviewed'],['reviewed','Reviewed']]],['website','Website signal',[['','Any website signal']]],['sort','Sort',[['score','Highest priority'],['name','Business name'],['recent','Recent evidence']]]]){
+      const node=select(values,S.filters[key]);node.dataset.filter=key;
+      node.addEventListener('change',()=>{S.filters[key]=node.value;S.offset=0;loadList(queue);});append(secondary,field(label,node));
+    }
+    append(secondary,el('span','small','Priority is a heuristic, not verified absence.'));
+    append(filterContainer,filters,secondary);append(queue,el('div','queue-results'));
+    if(S.detail)append(layout,renderInvestigation(S.detail));
+    loadList(queue);
+  }
+  async function loadList(queue) {const serial=++requestSerial;const results=$('.queue-results',queue);if(!results)return;if(!results.children.length)results.append(el('p','loading','Loading businesses…'));results.setAttribute('aria-busy','true');const params=new URLSearchParams({...S.filters,offset:String(S.offset),limit:String(S.limit)});try{const data=await api(`/api/businesses?${params}`);if(serial!==requestSerial)return;S.list=data;const queueSummary=$('[data-queue-summary]',queue);if(queueSummary)queueSummary.textContent=queueFilterSummary(data.total);for(const [key,facet] of [['state','states'],['trade','trades'],['website','websites']]){const n=$(`[data-filter="${key}"]`,queue);if(!n)continue;const options=[['',key==='website'?'Any website signal':`All ${key}s`],...(data.facets?.[facet]||[])];if(S.filters[key]&&!options.some(o=>(Array.isArray(o)?o[0]:o)===S.filters[key]))options.push(S.filters[key]);const replacement=select(options,S.filters[key]);n.replaceChildren(...Array.from(replacement.children));n.value=S.filters[key];}renderRows(results,data);}catch(e){if(serial!==requestSerial)return;results.replaceChildren(append(el('div','empty'),el('h3','','Could not load the queue'),el('p','',e.message),button('Try again',()=>loadList(queue))));}finally{if(serial===requestSerial)results.removeAttribute('aria-busy');}}
+  function renderRows(target,data) {target.replaceChildren(); const bar=el('div','selection-bar');const count=el('span','small',`${S.selected.size} selected`);append(bar,count,button('Select all filtered',()=>{data.matching_ids.forEach(id=>S.selected.add(id));renderRows(target,data);}),button('Clear',()=>{S.selected.clear();renderRows(target,data);}),button('Export selected',()=>exportPrompt(Array.from(S.selected)),'primary'));bar.lastChild.disabled=!S.selected.size;
+    if(S.detail){
+      const tools=el('details','queue-tools');tools.open=Boolean(S.queueToolsOpen);
+      target.classList.toggle('selection-open',tools.open);
+      tools.addEventListener('toggle',()=>{S.queueToolsOpen=tools.open;target.classList.toggle('selection-open',tools.open);});
+      append(tools,el('summary','','Select & export'+(S.selected.size?' · '+S.selected.size+' selected':'')),bar,button('Export all filtered',()=>exportPrompt(data.matching_ids),'export-filtered'));
+      append(target,tools);
+    }else append(target,bar);if(S.filters.queue==='excluded')append(target,el('p','callout warning','Excluded audit: these businesses are held or excluded from the candidate queue. Export does not clear contact restrictions.'));
     if(!data.records.length){append(target,append(el('div','empty'),el('h2','','No matching businesses'),el('p','','Try another search or broaden the queue filters.'),button('Reset filters',()=>guard(()=>{S.filters={q:'',state:'',trade:'',review:'all',website:'',queue:'candidates',sort:'score'};S.offset=0;render();}))));return;}
-    const table=el('table'),head=el('thead'),hr=el('tr');const all=input('checkbox');all.setAttribute('aria-label','Select this page');all.checked=data.records.every(r=>S.selected.has(r.id));all.addEventListener('change',()=>{data.records.forEach(r=>all.checked?S.selected.add(r.id):S.selected.delete(r.id));renderRows(target,data);});append(hr,append(el('th'),all),el('th','','Business'),el('th','','Priority'),el('th','','Review'));append(head,hr);append(table,head);const body=el('tbody');for(const r of data.records){const tr=el('tr',S.detail?.id===r.id?'selected':'');const c=input('checkbox');c.setAttribute('aria-label',`Select ${r.name}`);c.checked=S.selected.has(r.id);c.addEventListener('change',()=>{c.checked?S.selected.add(r.id):S.selected.delete(r.id);renderRows(target,data);});const name=append(el('td'),button(r.name,()=>guard(()=>openDetail(r.id)),'record-name'),el('small','',[r.city,r.state].filter(Boolean).join(', ')),el('small','',listValue(r.trades)));const status=r.qualified?'Qualified':human(r.verification_status);append(tr,append(el('td'),c),name,append(el('td'),el('span','score',r.score),el('small','',human(r.website_signal))),append(el('td'),el('span',`pill ${r.excluded_reasons?.length?'danger':r.review_history_count?'':'muted'}`,status),el('small','',human(r.queue_status))));append(body,tr);}append(table,body);append(target,append(el('div','table-wrap'),table));const footer=el('div','table-footer');const previous=button('← Previous',()=>{S.offset=Math.max(0,S.offset-S.limit);loadList(target.closest('.queue-panel'));});previous.disabled=S.offset===0;const next=button('Next →',()=>{S.offset+=S.limit;loadList(target.closest('.queue-panel'));});next.disabled=S.offset+S.limit>=data.total;append(footer,el('span','',`${S.offset+1}–${Math.min(S.offset+S.limit,data.total)} of ${data.total} results`),append(el('div','actions'),previous,next),button('Export all filtered',()=>exportPrompt(data.matching_ids)));append(target,footer);
+    const table=el('table'),head=el('thead'),hr=el('tr');const all=input('checkbox');all.setAttribute('aria-label','Select this page');all.checked=data.records.every(r=>S.selected.has(r.id));all.addEventListener('change',()=>{data.records.forEach(r=>all.checked?S.selected.add(r.id):S.selected.delete(r.id));renderRows(target,data);});append(hr,append(el('th'),all),el('th','','Business'),el('th','','Priority'),el('th','','Review'));append(head,hr);append(table,head);const body=el('tbody');for(const r of data.records){const tr=el('tr',S.detail?.id===r.id?'selected':'');const c=input('checkbox');c.setAttribute('aria-label',`Select ${r.name}`);c.checked=S.selected.has(r.id);c.addEventListener('change',()=>{c.checked?S.selected.add(r.id):S.selected.delete(r.id);renderRows(target,data);});const name=append(el('td'),button(r.name,()=>guard(()=>openDetail(r.id)),'record-name'),el('small','',[r.city,r.state].filter(Boolean).join(', ')),el('small','',listValue(r.trades)));const status=r.qualified?'Qualified':human(r.verification_status);append(tr,append(el('td'),c),name,append(el('td'),el('span','score',r.score),el('small','',human(r.website_signal))),append(el('td'),el('span',`pill ${r.excluded_reasons?.length?'danger':r.review_history_count?'':'muted'}`,status),el('small','',human(r.queue_status))));append(body,tr);}append(table,body);append(target,append(el('div','table-wrap'),table));const footer=el('div','table-footer');const previous=button('← Previous',()=>{S.offset=Math.max(0,S.offset-S.limit);loadList(target.closest('.queue-panel'));});previous.disabled=S.offset===0;const next=button('Next →',()=>{S.offset+=S.limit;loadList(target.closest('.queue-panel'));});next.disabled=S.offset+S.limit>=data.total;append(footer,el('span','',`${S.offset+1}–${Math.min(S.offset+S.limit,data.total)} of ${data.total} results`),append(el('div','actions'),previous,next),S.detail?null:button('Export all filtered',()=>exportPrompt(data.matching_ids)));append(target,footer);
   }
-  async function openDetail(id) {try{const d=await api(`/api/businesses/${id}`);guard(()=>{S.detail=d;S.dirty=false;render();});}catch(e){fail(e);}}
+  async function openDetail(id) {
+    const serial=++detailSerial;
+    try {
+      const [detail, investigation] = await Promise.all([
+        api('/api/businesses/'+id), api('/api/businesses/'+id+'/investigation')
+      ]);
+      if(serial!==detailSerial || S.view!=='queue')return;
+      S.detail=detail;
+      S.nextCandidates=null;
+      setupInvestigation(investigation);
+      render();
+      focusDesk();
+    } catch(error) { fail(error); }
+  }
   function definition(items) {const dl=el('dl','key-values');items.forEach(([label,value])=>append(dl,append(el('div'),el('dt','',label),append(el('dd'),value instanceof Node?value:document.createTextNode(value||'Not recorded')))));return dl;}
   function renderDetail(b) {const p=el('section','panel detail-panel');p.setAttribute('aria-label',`Review ${b.name}`);const top=el('div','detail-section');append(top,button('← Back to queue',()=>guard(()=>{S.detail=null;render();}),'mobile-back'),append(el('div','actions'),el('span',`pill ${b.qualified?'':'muted'}`,b.qualified?'Qualified':human(b.queue_status)),button('Close',()=>guard(()=>{S.detail=null;render();}))),el('h2','detail-title section-gap',b.name),el('p','detail-meta',[b.address,b.city,b.state,b.postcode].filter(Boolean).join(', ')),append(el('div','tags'),...(b.trades||[]).map(x=>el('span','pill muted',human(x)))));append(p,top);
     const machine=el('div','detail-section');append(machine,el('h3','','Machine signals'),definition([['Priority score',String(b.score)],['Website signal',human(b.website_signal)],['Activity',human(b.activity_assessment?.basis||b.activity)],['Latest evidence',dateText(b.latest_evidence_observed_at)]]),el('p','small','Signals guide review. Missing listing fields do not verify website absence.'));if(b.excluded_reasons?.length)append(machine,el('p','callout warning',`Excluded: ${b.excluded_reasons.map(human).join(' · ')}`));if(b.review_flags?.length)append(machine,append(el('div','tags'),...b.review_flags.map(x=>el('span','pill warning',human(x)))));append(machine,jsonDetails('Score and assessment details',{score_breakdown:b.score_breakdown,website:b.website_assessment,activity:b.activity_assessment,scope:b.scope_assessment}));append(p,machine);
@@ -52,9 +116,337 @@
   }
   function reviewForm(b) {const section=el('section','detail-section');append(section,el('h3','','Record a review'),el('p','','Change the decisions you checked. Evidence dates must reflect when the evidence was observed.'));const form=el('form'),grid=el('div','form-grid section-gap'),controls={},base=b.review||{};const defaults={website_status:'unreviewed',activity:'unknown',ownership:'unknown',residential:'unknown',service_fit:'unknown',delivery:'unknown',disposition:'pending',queue_hold:false,evidence_observed_at:null};const defs=[['website_status','Website decision',['unreviewed','no_site_found','site_found','uncertain']],['activity','Business activity',['unknown','active','closed']],['ownership','Ownership',['unknown','independent','chain']],['residential','Residential service',['unknown','yes','no']],['service_fit','Service fit',['unknown','yes','no']],['delivery','Delivery model',['unknown','mobile','fixed']],['disposition','Disposition',['pending','rejected','contacted']]];
     defs.forEach(([key,label,options])=>{const n=select(options,base[key]??defaults[key]);controls[key]=n;append(grid,field(label,n));});for(const [key,label,type] of [['verified_website','Confirmed website','url'],['candidate_website','Candidate website','url'],['evidence_observed_at','Evidence observed on','date'],['evidence_url','Evidence URL','url']]){const n=input(type,base[key]||'',key==='evidence_url');controls[key]=n;if(type==='date')n.max=new Date().toISOString().slice(0,10);append(grid,field(label,n,key==='evidence_observed_at'?'Use the observation date; never a guessed date.':undefined));}const notes=el('textarea');notes.value=base.notes||'';notes.required=true;controls.notes=notes;const nf=field('Evidence notes',notes,'Describe what you checked and the basis for these decisions.');nf.classList.add('span-2');append(grid,nf);
-    const hold=check('Keep this business on hold',Boolean(base.queue_hold));controls.queue_hold=hold.input;const activityCheck=check('Record a new activity check using this evidence');const contactCheck=check('I acknowledge that “contacted” adds a durable contact exclusion.');append(form,grid,el('div','section-gap'),hold.label,el('div','section-gap'),activityCheck.label,el('p','small','Existing activity evidence is retained unless activity changes or this box is checked.'),el('div','section-gap'),contactCheck.label);const error=el('p','inline-error');error.setAttribute('role','alert');const save=el('button','primary','Save review');save.type='submit';append(form,append(el('div','form-actions'),save,button('Reset edits',()=>guard(()=>{S.dirty=false;render();}))),error);form.addEventListener('input',()=>{S.dirty=true;});form.addEventListener('change',()=>{S.dirty=true;});form.addEventListener('submit',async e=>{e.preventDefault();error.textContent='';const changes={};for(const [key,n] of Object.entries(controls)){const value=n.type==='checkbox'?n.checked:n.value;const previous=base[key]??defaults[key]??'';if(value!==previous&&!(key==='evidence_observed_at'&&!value&&previous===null))changes[key]=key==='evidence_observed_at'?(value||null):value;}
-      if(activityCheck.input.checked)changes.activity=controls.activity.value;if(controls.disposition.value==='contacted'&&!contactCheck.input.checked){error.textContent='Acknowledge the durable contact exclusion before saving.';return;}if(!Object.keys(changes).length){error.textContent='No changes to save. Select a new activity check only when you have checked fresh activity evidence.';return;}changes.evidence_url=controls.evidence_url.value;changes.notes=controls.notes.value;if(('activity'in changes)&&controls.activity.value==='active'&&!controls.evidence_observed_at.value){error.textContent='An active activity check needs an explicit evidence observation date.';return;}S.reviewSaving=true;const locked=Array.from(form.querySelectorAll('input,select,textarea,button')).filter(n=>n!==save&&!n.disabled);locked.forEach(n=>{n.disabled=true;});try{await busy(save,async()=>{await api(`/api/businesses/${b.id}/review`,{changes,replace:false});S.dirty=false;await state();S.detail=await api(`/api/businesses/${b.id}`);notice('Review saved. Decisions and their evidence are recorded in history.');render();},'Saving…');}finally{S.reviewSaving=false;locked.forEach(n=>{n.disabled=false;});}});append(section,form);return section;
+    const hold=check('Keep this business on hold',Boolean(base.queue_hold));controls.queue_hold=hold.input;const activityCheck=check('Record a new activity check using this evidence');const contactCheck=check('I acknowledge that “contacted” adds a durable contact exclusion.');append(form,grid,el('div','section-gap'),hold.label,el('div','section-gap'),activityCheck.label,el('p','small','Existing activity evidence is retained unless activity changes or this box is checked.'),el('div','section-gap'),contactCheck.label);const error=el('p','inline-error');error.setAttribute('role','alert');const save=el('button','primary','Save review');save.type='submit';append(form,append(el('div','form-actions'),save,button('Reset edits',()=>guard(()=>{S.dirty=false;render();}))),error);form.addEventListener('input',()=>{S.dirty=true;S.advancedDirty=true;});form.addEventListener('change',()=>{S.dirty=true;S.advancedDirty=true;});form.addEventListener('submit',async e=>{e.preventDefault();if(S.reviewSaving)return;error.textContent='';const changes={};for(const [key,n] of Object.entries(controls)){const value=n.type==='checkbox'?n.checked:n.value;const previous=base[key]??defaults[key]??'';if(value!==previous&&!(key==='evidence_observed_at'&&!value&&previous===null))changes[key]=key==='evidence_observed_at'?(value||null):value;}
+      if(activityCheck.input.checked)changes.activity=controls.activity.value;if(controls.disposition.value==='contacted'&&!contactCheck.input.checked){error.textContent='Acknowledge the durable contact exclusion before saving.';return;}if(!Object.keys(changes).length){error.textContent='No changes to save. Select a new activity check only when you have checked fresh activity evidence.';return;}changes.evidence_url=controls.evidence_url.value;changes.notes=controls.notes.value;if(('activity'in changes)&&controls.activity.value==='active'&&!controls.evidence_observed_at.value){error.textContent='An active activity check needs an explicit evidence observation date.';return;}S.reviewSaving=true;const locked=Array.from((form.closest('.investigation')||form).querySelectorAll('input,select,textarea,button')).filter(n=>n!==save&&!n.disabled);locked.forEach(n=>{n.disabled=true;});try{await busy(save,async()=>{await persistDraft().catch(error=>{showDeskError(error);throw error;});await api(`/api/businesses/${b.id}/review`,{changes,replace:false});S.dirty=false;await state();S.detail=await api(`/api/businesses/${b.id}`);S.advancedDirty=false;setupInvestigation(await api(`/api/businesses/${b.id}/investigation`));notice('Review saved. Decisions and their evidence are recorded in history.');render();},'Saving…');}finally{S.reviewSaving=false;locked.forEach(n=>{n.disabled=false;});}});append(section,form);return section;
   }
+  const questionOrder = ['identity', 'website', 'activity', 'fit'];
+  const questionLabels={identity:'Identity',website:'Website',activity:'Activity',fit:'Service fit'};
+  const answerLabels={identity_status:'Identity decision',website_status:'Website decision',activity:'Activity',ownership:'Ownership',residential:'Residential service',service_fit:'Service fit',delivery:'Delivery model',verified_website:'Confirmed website',candidate_website:'Candidate website',evidence_url:'Checked evidence URL',evidence_observed_at:'Evidence observed on',notes:'Evidence notes'};
+  const choiceFields=new Set(['identity_status','website_status','activity','ownership','residential','service_fit','delivery']);
+  const questionInfo = {
+    identity: ['Are these sources the same business?', 'Compare names, location and contact details. A mismatch creates a hold; it never merges or splits records.'],
+    website: ['Does this business have its own website?', 'A missing listing field is a lead to investigate, not proof of website absence.'],
+    activity: ['Is the business currently active?', 'Use dated evidence of activity. Saving other questions does not refresh this check.'],
+    fit: ['Does the business fit your review scope?', 'Check ownership, residential work, service and delivery against your configured scope.']
+  };
+  const questionFields = {
+    identity: [['identity_status', 'Identity decision', [['', 'Choose an answer'], ['same_business', 'Same business'], ['different_businesses', 'Different businesses — hold'], ['uncertain', 'Uncertain']]]],
+    website: [['website_status', 'Website decision', [['', 'Choose an answer'], ['no_site_found', 'No site found after checking'], ['site_found', 'Confirmed website found'], ['uncertain', 'Uncertain']]]],
+    activity: [['activity', 'Activity decision', [['', 'Choose an answer'], ['active', 'Active'], ['closed', 'Closed'], ['unknown', 'Unknown']]]],
+    fit: [['ownership','Ownership',['unknown','independent','chain']], ['residential','Residential service',['unknown','yes','no']], ['service_fit','Service fit',['unknown','yes','no']], ['delivery','Delivery model',['unknown','mobile','fixed']]]
+  };
+  let draftTimer;
+  const copy = value => JSON.parse(JSON.stringify(value));
+
+  function setupInvestigation(data) {
+    clearTimeout(draftTimer);
+    S.investigation = {
+      ...data, mode:data.draft?.mode || 'workspace', step:data.draft?.step || 0,
+      edits:copy(data.draft?.questions || {}), sequence:0, savedSequence:0,
+      saving:null, error:null, conflict:false, summary:false, request:null
+    };
+    S.dirty=false;
+    S.advancedDirty=false;
+  }
+
+  function draftPayload(inv) {
+    return {mode:inv.mode, step:inv.step, questions:copy(inv.edits)};
+  }
+
+  function draftStatus() {
+    const inv=S.investigation;
+    if(!inv)return;
+    document.querySelectorAll('[data-draft-status]').forEach(node=>{
+      node.textContent=inv.error ? 'Draft not saved · your input is kept here' : inv.saving ? 'Saving draft locally…' : inv.sequence!==inv.savedSequence ? 'Unsaved changes…' : inv.draft || Object.keys(inv.edits).length ? 'Draft saved in this workspace' : 'No unfinished draft';
+    });
+  }
+
+  function changedDraft() {
+    const inv=S.investigation;
+    inv.sequence++;
+    inv.request=null;
+    S.dirty=true;
+    draftStatus();
+    clearTimeout(draftTimer);
+    draftTimer=setTimeout(()=>persistDraft().catch(showDeskError),450);
+  }
+
+  async function persistDraft() {
+    const inv=S.investigation;
+    if(!inv || !S.detail || !inv.can_review)return;
+    if(inv.saving)return inv.saving;
+    if(inv.conflict)throw new Error('Another review or draft changed. Resolve the conflict below before continuing.');
+    if(inv.sequence===inv.savedSequence)return;
+    const id=S.detail.id;
+    inv.saving=(async()=>{
+      while(inv.sequence!==inv.savedSequence) {
+        const sequence=inv.sequence;
+        const payload=draftPayload(inv);
+        try {
+          const saved=await api(`/api/businesses/${id}/draft`,{
+            review_revision:inv.review_revision, draft_revision:inv.draft_revision, draft:payload
+          });
+          Object.assign(inv,{review_revision:saved.review_revision,draft_revision:saved.draft_revision,draft:saved.draft,savedSequence:sequence,error:null});
+          S.dirty=inv.sequence!==inv.savedSequence || Boolean(S.advancedDirty);
+        } catch(error) {
+          inv.error=error.message;
+          inv.conflict=error.status===409;
+          throw error;
+        }
+      }
+    })();
+    draftStatus();
+    try {await inv.saving;} finally {inv.saving=null;draftStatus();}
+  }
+
+  function resolveDeskNotice(message) {
+    const current=$('#notice');
+    if(S.deskErrorNotice===noticeGeneration && current.className==='error')notice(message);
+    S.deskErrorNotice=null;
+  }
+
+  function showDeskError(error) {
+    S.deskErrorNotice=fail(error);
+    const inv=S.investigation;
+    if(!inv)return;
+    inv.error=error.message;
+    if(error.status===409)inv.conflict=true;
+    const box=document.querySelector('[data-draft-error]');
+    if(!box)return;
+    box.replaceChildren(el('p','inline-error',error.message));
+    if(inv.conflict) {
+      append(box,el('p','small','Your answers are retained. Load the newer review for comparison, then explicitly keep your draft or use the newer draft.'),button('Compare latest saved work',async()=>{
+        try {
+          const latest=await api(`/api/businesses/${S.detail.id}/investigation`);
+          box.replaceChildren(el('p','callout warning','Compare before replacing the newer unfinished draft. No answers have been submitted.'),jsonDetails('Newer saved questions',latest.questions),jsonDetails('Newer unfinished draft',latest.draft),jsonDetails('Your retained answers',inv.edits));
+          append(box,button('Keep my answers as the draft',async()=>{
+            inv.review_revision=latest.review_revision;inv.draft_revision=latest.draft_revision;
+            inv.questions=latest.questions;inv.can_review=latest.can_review;inv.latest_session=latest.latest_session;
+            inv.conflict=false;inv.error=null;inv.sequence++;inv.request=null;
+            try {await persistDraft();resolveDeskNotice('Conflict resolved. Your answers are saved as the local draft.');render();focusDesk();}catch(e){showDeskError(e);}
+          }),button('Use newer saved work',()=>{setupInvestigation(latest);resolveDeskNotice('Conflict resolved. The newer saved work is loaded.');render();focusDesk();}));
+        }catch(e){fail(e);}
+      }));
+    } else append(box,button('Retry saving draft',async()=>{
+      try{await persistDraft();resolveDeskNotice('Draft saved locally.');box.replaceChildren();}catch(e){showDeskError(e);}
+    }));
+    draftStatus();
+  }
+
+  function focusDesk() {
+    const node=document.querySelector('.desk-title');
+    node?.focus({preventScroll:true});
+  }
+
+  async function changeDesk(update) {
+    if(S.advancedDirty){guard(()=>changeDesk(update));return;}
+    if(S.reviewSaving || S.navigating || S.deskMoving)return;
+    S.deskMoving=true;
+    try {
+      update(S.investigation);
+      if(S.investigation.can_review){changedDraft();await persistDraft();}
+      render();focusDesk();
+    }catch(error){showDeskError(error);}finally{S.deskMoving=false;}
+  }
+
+  function entryFor(key) {
+    const inv=S.investigation;
+    return copy(inv.edits[key] || inv.questions[key] || {});
+  }
+
+  function renderInvestigation(b) {
+    const inv=S.investigation;
+    const desk=el('section','panel investigation');
+    desk.setAttribute('aria-label',`Investigate ${b.name}`);
+    const title=el('h2','desk-title',b.name);title.tabIndex=-1;
+    const modes=append(el('div','desk-modes'),...['workspace','guided'].map(mode=>{
+      const node=button(mode==='workspace'?'Investigation desk':'Guided review',()=>changeDesk(i=>{i.mode=mode;i.summary=false;}));
+      node.setAttribute('aria-pressed',String(inv.mode===mode));return node;
+    }));
+    append(desk,append(el('header','desk-head'),append(el('div'),el('p','eyebrow','ONE BUSINESS · FOUR QUESTIONS'),title,el('p','detail-meta',[b.address,b.city,b.state].filter(Boolean).join(', ')),append(el('div','tags'),el('span','pill',human(b.queue_status)),...(b.trades||[]).map(t=>el('span','pill muted',human(t))))),append(el('div','desk-head-actions'),button('← Queue',()=>guard(()=>{S.detail=null;S.investigation=null;render();})),modes)));
+    if(b.excluded_reasons?.length)append(desk,el('p',`desk-restriction callout ${inv.can_review?'warning':''}`,inv.can_review?`Excluded from candidates: ${b.excluded_reasons.map(human).join(' · ')}. Evidence can be corrected below.`:'Durable contact exclusion · read-only. This business cannot be reviewed or contacted through this workflow.'));
+    const nav=el('nav','question-nav');nav.setAttribute('aria-label','Review questions');
+    questionOrder.forEach((key,index)=>{
+      const status=inv.edits[key]?'Draft':inv.questions[key]?'Saved':'Unchecked';
+      const node=button(`${index+1}. ${questionLabels[key]} · ${status}`,()=>changeDesk(i=>{i.step=index;i.summary=false;}));
+      if(inv.step===index&&!inv.summary)node.setAttribute('aria-current','step');
+      append(nav,node);
+    });
+    append(desk,nav);
+    if(inv.summary)append(desk,renderSessionSummary(b));
+    else {
+      const key=questionOrder[inv.step];
+      append(desk,append(el('div',`desk-body ${inv.mode==='guided'?'guided':''}`),renderEvidence(b,key),renderQuestion(b,key)));
+    }
+    const status=el('p','draft-status');status.dataset.draftStatus='';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const errors=el('div','desk-errors');errors.dataset.draftError='';errors.setAttribute('role','alert');
+    append(desk,append(el('div','desk-footer'),status,el('p','small','Local draft · no outreach · no contact permission granted')),errors);
+    if(inv.latest_session?.can_undo && inv.can_review)append(desk,append(el('div','undo-bar'),el('p','small','Undo restores the previous decisions. History and durable exclusions remain.'),button('Undo last save',e=>busy(e.currentTarget,()=>undoInvestigation(),'Restoring…'))));
+    const advanced=el('details','advanced-review');
+    append(advanced,el('summary','','Advanced review & full history'));
+    if(inv.can_review)append(advanced,el('p','callout','Advanced controls include hold and disposition. Unfinished desk answers remain saved separately.'),reviewForm(b));
+    append(advanced,jsonDetails('Current evaluated record',b.review||{}),jsonDetails('All review history',b.reviews||[]),jsonDetails('Assessment and score details',{score:b.score_breakdown,website:b.website_assessment,activity:b.activity_assessment,scope:b.scope_assessment}));
+    append(desk,advanced);
+    queueMicrotask(()=>{draftStatus();if(inv.error)showDeskError(new Error(inv.error));});
+    return desk;
+  }
+
+  function renderEvidence(b,key) {
+    const area=el('section','desk-evidence');
+    append(area,el('p','eyebrow',`QUESTION ${S.investigation.step+1} OF 4`),el('h3','desk-question',questionInfo[key][0]),el('p','desk-help',questionInfo[key][1]));
+    const observations=b.observations||[];
+    if(!observations.length)append(area,el('p','callout warning','No original observations were supplied. Add your checked evidence to make a decision.'));
+    observations.forEach((o,index)=>{
+      const card=el('article','evidence-card');
+      append(card,el('p','eyebrow',o.source||`SOURCE ${index+1}`),el('h3','',o.name||b.name),el('p','evidence-location',[o.address,o.city,o.state].filter(Boolean).join(', ')||'Location not supplied'));
+      if(key==='identity')append(card,el('p','',`Phones: ${listValue(o.phones)||'Not supplied'}`));
+      if(key==='website')append(card,el('p','',`Website fields: ${listValue(o.websites)||'Not supplied — absence is unverified'}`));
+      if(key==='activity')append(card,el('p','',`Source activity signal: ${human(o.activity)}`));
+      if(key==='fit')append(card,el('p','',`Categories: ${listValue(o.categories)||'Not supplied'}`));
+      append(card,append(el('div','evidence-meta'),el('span','',`Observed: ${dateText(o.observed_at)}`),o.source_url?link(o.source_url,'Open source ↗'):el('span','','Source URL not supplied')),jsonDetails('Inspect original observation',o));
+      append(area,card);
+    });
+    if(b.websites?.length||b.socials?.length)append(area,append(el('article','evidence-card'),el('h3','','Available business links'),...([...b.websites||[],...b.socials||[]].map(url=>append(el('p'),link(url))))));
+    const trail=el('details','question-trail');
+    const entries=(b.reviews||[]).filter(r=>r.investigation_question===key);
+    append(trail,el('summary','',`${questionLabels[key]} review trail · ${entries.length}`));
+    if(!entries.length)append(trail,el('p','small','No question-specific review saved. Earlier reviews remain in full history.'));
+    entries.slice().reverse().forEach(r=>append(trail,append(el('article','history-entry'),el('time','',`Saved: ${dateText(r.created_at)}`),el('p','',r.notes||''),el('p','small',`Evidence observed: ${dateText(r.evidence_observed_at)}`),r.evidence_url?link(r.evidence_url,'Checked evidence ↗'):null,jsonDetails('Saved question entry',r))));
+    append(area,trail);return area;
+  }
+
+  function renderQuestion(b,key) {
+    const inv=S.investigation;
+    const side=el('section','desk-decision');
+    append(side,el('p','eyebrow',inv.mode==='guided'?'YOUR ANSWER':'RECORD A DECISION'));
+    if(!inv.can_review){append(side,el('h3','','Contact exclusion retained'),el('p','desk-help','Review controls are read-only for this business. Inspect its sources and history.'));return side;}
+    const form=el('form'), entry=entryFor(key), controls={};
+    const saveInput=(name,value)=>{
+      entry[name]=value;
+      inv.edits[key]=copy(entry);
+      changedDraft();
+    };
+    questionFields[key].forEach(([name,label,options])=>{
+      const node=select(options,entry[name]??(key==='fit'?'unknown':''));
+      controls[name]=node;entry[name]=node.value;node.required=true;
+      node.addEventListener('change',()=>saveInput(name,node.value));append(form,field(label,node));
+    });
+    if(key==='website')for(const [name,label] of [['verified_website','Confirmed website'],['candidate_website','Candidate website']]){
+      const node=input('url',entry[name]||'');controls[name]=node;
+      node.addEventListener('input',()=>saveInput(name,node.value));append(form,field(label,node));
+    }
+    for(const [name,label,type] of [['evidence_url','Checked evidence URL','url'],['evidence_observed_at','Evidence observed on','date']]){
+      const node=input(type,entry[name]||'',true);controls[name]=node;
+      if(type==='date')node.max=new Date().toISOString().slice(0,10);
+      node.addEventListener('input',()=>saveInput(name,node.value));
+      append(form,field(label,node,type==='date'?'Enter the actual date you observed this evidence.':'Use a specific HTTP(S) source you checked.'));
+    }
+    const notes=el('textarea');notes.required=true;notes.rows=4;notes.value=entry.notes||'';controls.notes=notes;
+    notes.addEventListener('input',()=>saveInput('notes',notes.value));
+    append(form,field('Evidence notes',notes,'Explain the basis for this answer.'));
+    const submit=el('button','primary',inv.mode==='guided'?'Keep answer & continue →':'Save this question');submit.type='submit';
+    append(form,append(el('div','decision-actions'),submit,button(inv.mode==='guided'?'Skip this question':'Discard this question’s edits',()=>changeDesk(i=>{delete i.edits[key];if(i.mode==='guided'){if(i.step===3)i.summary=true;else i.step++;}})),button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;render();}))));
+    if(inv.mode==='guided')append(form,button('Review session summary',()=>changeDesk(i=>{i.summary=true;}),'summary-link'));
+    form.addEventListener('submit',e=>{
+      e.preventDefault();
+      if(S.reviewSaving)return;
+      const answer={};Object.entries(controls).forEach(([name,node])=>{answer[name]=node.value;});
+      if(key==='website'&&answer.website_status==='site_found'&&!answer.verified_website){notice('Add the confirmed website before saving this answer.',true);controls.verified_website.focus();return;}
+      const edited=Boolean(inv.edits[key]);
+      if(inv.mode==='guided')changeDesk(i=>{if(edited)i.edits[key]=answer;if(i.step===3)i.summary=true;else i.step++;});
+      else if(edited){inv.edits[key]=answer;changedDraft();busy(submit,()=>commitInvestigation([key]),'Saving question…');}
+      else notice('This question has no new changes. Edit an answer or its checked evidence to save a new review.');
+    });
+    append(side,form);return side;
+  }
+
+  function renderSessionSummary(b) {
+    const inv=S.investigation, section=el('section','session-summary');
+    append(section,el('p','eyebrow','GUIDED REVIEW'),el('h3','desk-question','Review your session'),el('p','desk-help','Only the checked or edited answers below will be submitted together. Skipped questions keep their existing decisions.'));
+    questionOrder.forEach((key,index)=>{
+      const answer=inv.edits[key];
+      const row=el('article','summary-card');
+      append(row,append(el('div','summary-top'),el('h3','',questionLabels[key]),el('span',`pill ${answer?'':'muted'}`,answer?'New answer':'Skipped · previous decision retained')));
+      if(answer)append(row,definition(Object.entries(answer).map(([name,value])=>[answerLabels[name]||human(name),['evidence_url','verified_website','candidate_website'].includes(name)&&value?link(value):choiceFields.has(name)?human(value):String(value||'Not supplied')])));
+      append(row,append(el('div','actions'),button(answer?'Edit answer':'Check this question',()=>changeDesk(i=>{i.step=index;i.summary=false;})),answer?button('Skip',()=>changeDesk(i=>{delete i.edits[key];})):null));append(section,row);
+    });
+    const finish=button('Finish & save review',e=>busy(e.currentTarget,()=>commitInvestigation(Object.keys(inv.edits)),'Saving review…'),'primary');
+    finish.disabled=!inv.can_review || !Object.keys(inv.edits).length;
+    append(section,append(el('div','actions section-gap'),finish,button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;render();}))));
+    return section;
+  }
+
+  async function commitInvestigation(keys) {
+    if(S.reviewSaving)return;
+    const inv=S.investigation,id=S.detail.id;
+    const queueIds=S.list?.matching_ids||[];
+    S.nextCandidates=queueIds.slice(queueIds.indexOf(id)+1);
+    S.reviewSaving=true;
+    // Lock inputs while committing so a successful response cannot discard later typing.
+    const locked=Array.from(document.querySelectorAll('.investigation input,.investigation select,.investigation textarea,.investigation button')).filter(node=>!node.disabled);
+    locked.forEach(node=>{node.disabled=true;});
+    try {
+      await persistDraft();
+      const questions=Object.fromEntries(keys.filter(key=>inv.edits[key]).map(key=>[key,copy(inv.edits[key])]));
+      if(!Object.keys(questions).length)throw new Error('There are no newly checked answers to submit.');
+      inv.request=inv.request||{review_revision:inv.review_revision,draft_revision:inv.draft_revision,request_id:crypto.randomUUID(),questions};
+      const result=await api(`/api/businesses/${id}/investigation`,inv.request);
+      // The commit clears the server draft. Restore any other unfinished answers
+      // with the returned revisions before refreshes that can fail independently.
+      const remaining=Object.fromEntries(Object.entries(inv.edits).filter(([key])=>!keys.includes(key)));
+      Object.assign(inv,{review_revision:result.review_revision,draft_revision:result.draft_revision,draft:null,request:null,edits:remaining,questions:{...inv.questions,...questions},latest_session:{session_id:result.session_id,can_undo:true}});
+      inv.sequence++;
+      S.dirty=true;
+      await persistDraft();
+      notice('Review saved. Checked answers and their individual evidence are recorded.');
+      try {
+        const [detail,latest]=await Promise.all([api(`/api/businesses/${id}`),api(`/api/businesses/${id}/investigation`)]);
+        S.detail=detail;setupInvestigation(latest);
+        await state();render();focusDesk();
+      }catch(refreshError){
+        render();focusDesk();
+        notice('Review saved and remaining draft retained. Refresh could not finish: '+refreshError.message,true);
+      }
+      showCompletion(result.session_id);
+    }catch(error){showDeskError(error);throw error;}
+    finally{S.reviewSaving=false;locked.forEach(node=>{node.disabled=false;});}
+  }
+
+  function showCompletion(sessionId) {
+    const footer=document.querySelector('.desk-footer');if(!footer)return;
+    append(footer,button('Next business →',()=>guard(nextBusiness),'primary'));
+  }
+
+  async function nextBusiness() {
+    try {
+      const ids=S.list?.matching_ids||[];
+      const current=ids.indexOf(S.detail.id);
+      const remaining=(S.nextCandidates||ids.slice(current+1)).filter(id=>ids.includes(id));
+      for(const id of remaining){
+        const investigation=await api(`/api/businesses/${id}/investigation`);
+        if(!investigation.can_review)continue;
+        S.offset=Math.floor(ids.indexOf(id)/S.limit)*S.limit;
+        await openDetail(id);return;
+      }
+      notice('No further reviewable businesses in this filtered queue.');
+      S.detail=null;S.investigation=null;render();
+    }catch(error){fail(error);}
+  }
+
+  async function undoInvestigation() {
+    if(S.reviewSaving)return;
+    await persistDraft();
+    const inv=S.investigation,id=S.detail.id;
+    if(Object.keys(inv.edits).length)throw new Error('Save or discard your unfinished question edits before undoing the last review.');
+    S.reviewSaving=true;
+    try {
+      await api(`/api/businesses/${id}/investigation/undo`,{session_id:inv.latest_session.session_id,review_revision:inv.review_revision});
+      const [detail,latest]=await Promise.all([api(`/api/businesses/${id}`),api(`/api/businesses/${id}/investigation`)]);
+      S.detail=detail;setupInvestigation(latest);await state();render();focusDesk();
+      notice('Last save undone. Submitted answers are restored as an editable local draft; history and durable exclusions remain.');
+    }catch(error){showDeskError(error);throw error;}finally{S.reviewSaving=false;}
+  }
+
   function renderImport() {const im=S.importing;append(content,heading('Import data','Bring a permitted source into your local workspace.'));const outer=el('div','narrow'),steps=el('div','steps');['Choose data','Preview & map','Rights & confirm'].forEach((x,i)=>append(steps,append(el('div',`step ${im.step===i+1?'active':''}`),el('b','',`0${i+1}`),el('span','',x))));append(content,outer);append(outer,steps);if(im.step===1)importChoose(outer);if(im.step===2)importPreview(outer);if(im.step===3)importRights(outer);}
   function importChoose(outer){const im=S.importing,form=el('form'),file=input('file');file.accept='.csv,.json,.jsonl,.ndjson,.geojson';const adapter=select([['canonical','CSV / JSON / JSONL'],['overture','Overture Places'],['osm','OpenStreetMap']],im.adapter);adapter.addEventListener('change',()=>{im.adapter=adapter.value;im.preview=null;});const filename=input('text',im.filename);filename.placeholder='businesses.csv';const text=el('textarea');text.rows=8;text.value=im.content;text.spellcheck=false;text.placeholder='Paste UTF-8 CSV, JSON, or JSONL content';const advanced=el('details');advanced.open=Boolean(im.content);append(advanced,el('summary','','Advanced: paste source text'),el('div','section-gap'),field('Filename / format label',filename),el('div','section-gap'),field('Source content',text));file.addEventListener('change',async()=>{const f=file.files[0];if(!f)return;if(f.size>6*1024*1024){fail(new Error('Choose a file smaller than 6 MiB so the JSON request remains within the local import limit.'));file.value='';return;}try{im.content=await f.text();im.filename=f.name;text.value=im.content;filename.value=f.name;im.preview=null;notice(`Selected ${f.name}. Preview it before importing.`);}catch(e){fail(e);}});text.addEventListener('input',()=>{im.content=text.value;im.preview=null;});filename.addEventListener('input',()=>{im.filename=filename.value;im.preview=null;});const submit=el('button','primary','Preview data →');submit.type='submit';append(form,field('Source format',adapter),el('div','section-gap'),field('Choose a local file',file,'Up to 5,000 source rows per import. Your file stays on this machine.'),advanced,el('p','callout','Preview first. Import requires an explicit source-rights declaration and confirmation.'),submit);form.addEventListener('submit',e=>{e.preventDefault();if(!im.content.trim()||!im.filename.trim()){fail(new Error('Choose a file or provide both a filename and pasted content.'));return;}busy(submit,async()=>{im.preview=await api('/api/import/preview',{filename:im.filename,content:im.content,adapter:im.adapter});im.step=2;render();},'Reading source…');});append(outer,panel('Choose your source',form));}
   function importPreview(outer){const im=S.importing,p=im.preview,body=el('div');append(body,el('p','',im.filename),append(el('div','import-facts'),...[[p.total_rows,'Source rows'],[p.valid_rows,'Valid rows'],[p.skipped_rows,'Skipped rows']].map(([n,l])=>append(el('div'),el('strong','',n),el('span','small',l)))));if(p.warnings?.length)append(body,el('p','callout warning',p.warnings.join(' · ')));if(p.errors?.length){const ul=el('ul');p.errors.slice(0,30).forEach(e=>append(ul,el('li','',`Row ${e.row}: ${e.message}`)));append(body,el('h3','','Fix these source issues before import'),ul);}
