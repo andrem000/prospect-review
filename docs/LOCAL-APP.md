@@ -38,6 +38,8 @@ Open a business in the Investigation desk. The queue, source evidence and decisi
 
 Save only the question you actually checked, with its evidence URL, notes and observation date. Dates are never automatically filled with today's date. Recording an uncertain result still requires the source you checked and when you checked it. If you cannot yet provide that basis, keep the unfinished draft or defer the business.
 
+Saved question values follow the effective review, including later CLI or advanced corrections. Older guided answers remain in history. If a legacy correction's evidence cannot be associated with a particular answer, the editor leaves that evidence blank rather than reusing an older question's date or notes. Existing unfinished drafts are retained separately.
+
 ## Guided review and drafts
 
 Guided review presents one question group at a time, with the same underlying evidence and decisions as the desk. Move between questions, skip questions you did not check, and inspect the summary before saving. Edit any proposed answer from the summary. Only newly checked or edited questions are committed; untouched previous decisions remain unchanged. Every supplied question is validated before the whole session is saved.

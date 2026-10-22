@@ -152,7 +152,9 @@ class Comparison:
         if prior and meaningful(before) != current and matches - {bid}:
             identity_warnings.append('Source identity points to this business but strong identity clues also match another business; existing binding retained.')
         if not prior and len(matches) > 1:
-            identity_warnings.append('Multiple strong identity matches; existing importer created a separate business without merging.')
+            identity_warnings.append('Multiple strong identity matches (business IDs: ' +
+                                     ', '.join(str(value) for value in sorted(matches)) +
+                                     '); existing importer created a separate business without merging.')
         if before:
             old = meaningful(before)
             identity_changed = any(old[f] != current[f] for f in ('name', 'country', 'state', 'city', 'address', 'phones'))
@@ -162,8 +164,11 @@ class Comparison:
                 identity_warnings.append('Possible reused source identity: name and supporting contact/location clues changed; existing binding retained.')
         if identity_warnings:
             self.summary['identity_warnings'] += 1
-        if bid in self.existing_ids:
-            cross_source = before is None
+        existing_business = bid in self.existing_ids
+        # Ordinary new identities stay quiet; exceptional identity ambiguity must
+        # remain actionable after the transient import summary is dismissed.
+        if existing_business or identity_warnings:
+            cross_source = existing_business and before is None
             if cross_source:
                 self.additional.add(alias)
                 alternatives = [o for other, o in self.latest.values() if other == bid]
@@ -199,8 +204,17 @@ class Comparison:
                              fields=fields, questions=sorted({f['question'] for f in fields} | ({'identity'} if identity_warnings else set())), warnings=warnings)
                 if cross_source and fields and not disagreement:
                     event['label'] = 'Additional source evidence'
+                if identity_warnings:
+                    if not existing_business:
+                        event['label'] = 'Identity warning'
+                    event['identity_context'] = dict(
+                        business_ids=sorted(matches | {bid}),
+                        observation_ids=[r['id'] for r in self.db.execute(
+                            'SELECT id FROM observations WHERE batch_id=? AND source=? AND source_id=? ORDER BY id',
+                            (batch, source, row['source_id']))])
                 self.db.execute('INSERT INTO change_events(business_id,batch_id,data) VALUES(?,?,?)', (bid, batch, json.dumps(event)))
-                self.changed.add(bid)
+                if existing_business:
+                    self.changed.add(bid)
         self.latest[alias] = (bid, {**row, 'source': source, 'batch_id': batch})
 
     def finish(self, new_businesses, skipped_rows):

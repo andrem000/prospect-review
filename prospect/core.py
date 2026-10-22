@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 import unicodedata
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone, date
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qsl, urlencode
@@ -294,60 +294,88 @@ REVIEW_DEFAULTS = dict(website_status='unreviewed', verified_website='', candida
 ACTIVITY_EVIDENCE_FIELDS = ('activity_evidence_observed_at', 'activity_evidence_url', 'activity_evidence_notes')
 
 
+@contextmanager
+def _review_transaction(db):
+    """Serialize the merge and writes without committing a caller's transaction."""
+    owned = not db.in_transaction
+    if owned:
+        db.execute('BEGIN IMMEDIATE')
+    else:
+        db.execute('SAVEPOINT core_review')
+    try:
+        if not owned:
+            # A savepoint alone does not reserve the writer lock. A no-row write
+            # reserves it before reading the merge basis, without changing data.
+            # A caller's stale WAL snapshot fails here rather than losing updates.
+            db.execute('UPDATE businesses SET id=id WHERE 0')
+        yield
+        if owned:
+            db.commit()
+        else:
+            db.execute('RELEASE SAVEPOINT core_review')
+    except BaseException:
+        if owned:
+            db.rollback()
+        else:
+            db.execute('ROLLBACK TO SAVEPOINT core_review')
+            db.execute('RELEASE SAVEPOINT core_review')
+        raise
+
+
 def review(db, bid, data, replace=False):
     """Append an effective decision, preserving omitted fields without re-dating evidence."""
-    if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
-        raise ValueError('Unknown business ID')
-    supplied = dict(data)
-    supplied.pop('created_at', None)  # Recording metadata belongs to this insertion.
-    if 'evidence_observed_at' in supplied and supplied['evidence_observed_at'] is not None:
-        value = supplied['evidence_observed_at']
-        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
-            raise ValueError('evidence_observed_at must be YYYY-MM-DD')
-        observed = date.fromisoformat(value)
-        if observed > datetime.now(timezone.utc).date():
-            raise ValueError('evidence_observed_at cannot be in the future')
-    previous_row = db.execute('SELECT data FROM reviews WHERE business_id=? ORDER BY id DESC LIMIT 1', (bid,)).fetchone()
-    previous = json.loads(previous_row['data']) if previous_row else {}
-    effective = dict(REVIEW_DEFAULTS)
-    if not replace:
-        # Carry decisions, not insertion metadata or snapshot-origin claims.
-        effective.update({k: previous[k] for k in REVIEW_DEFAULTS if k in previous})
-    effective.update(supplied)
-    if not public_url(effective.get('evidence_url')) or not str(effective.get('notes') or '').strip():
-        raise ValueError('Review requires an HTTP(S) evidence URL and nonempty notes')
-    if effective['website_status'] not in WEBSITE_STATUSES:
-        raise ValueError('Invalid website_status')
-    choices = {'activity': ('unknown', 'active', 'closed'), 'ownership': ('unknown', 'independent', 'chain'),
-               'residential': ('unknown', 'yes', 'no'), 'service_fit': ('unknown', 'yes', 'no'),
-               'delivery': ('unknown', 'mobile', 'fixed'), 'disposition': ('pending', 'rejected', 'contacted'),
-               'identity_status': ('unknown', 'same_business', 'different_businesses', 'uncertain')}
-    for field, allowed in choices.items():
-        if effective[field] not in allowed:
-            raise ValueError('Invalid ' + field)
-    if effective['website_status'] == 'site_found' and not public_url(effective.get('verified_website')):
-        raise ValueError('site_found requires --verified-website with an HTTP(S) URL')
-    if effective['website_status'] == 'site_found' and not confirmable_site(effective['verified_website']):
-        raise ValueError('site_found requires a dedicated-domain or tenant-hosted business site with evidence and notes; social/directory/contact/shortener links cannot be confirmed as sites')
-    if effective.get('candidate_website') and not public_url(effective['candidate_website']):
-        raise ValueError('candidate_website requires an HTTP(S) URL')
-    # Only an explicit activity assertion binds the current review evidence to
-    # activity. A website/date-only correction retains the original activity basis.
-    if 'activity' in supplied or replace:
-        activity_basis = effective
-        values = (activity_basis.get('evidence_observed_at'), activity_basis.get('evidence_url'), activity_basis.get('notes'))
-    else:
-        values = tuple(previous.get(k, previous.get(fallback)) for k, fallback in zip(
-            ACTIVITY_EVIDENCE_FIELDS, ('evidence_observed_at', 'evidence_url', 'notes')))
-    effective.update(zip(ACTIVITY_EVIDENCE_FIELDS, values))
-    recorded_at = now()
-    with db:
+    with _review_transaction(db):
+        if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
+            raise ValueError('Unknown business ID')
+        supplied = dict(data)
+        supplied.pop('created_at', None)  # Recording metadata belongs to this insertion.
+        if 'evidence_observed_at' in supplied and supplied['evidence_observed_at'] is not None:
+            value = supplied['evidence_observed_at']
+            if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+                raise ValueError('evidence_observed_at must be YYYY-MM-DD')
+            observed = date.fromisoformat(value)
+            if observed > datetime.now(timezone.utc).date():
+                raise ValueError('evidence_observed_at cannot be in the future')
+        previous_row = db.execute('SELECT data FROM reviews WHERE business_id=? ORDER BY id DESC LIMIT 1', (bid,)).fetchone()
+        previous = json.loads(previous_row['data']) if previous_row else {}
+        effective = dict(REVIEW_DEFAULTS)
+        if not replace:
+            # Carry decisions, not insertion metadata or snapshot-origin claims.
+            effective.update({k: previous[k] for k in REVIEW_DEFAULTS if k in previous})
+        effective.update(supplied)
+        if not public_url(effective.get('evidence_url')) or not str(effective.get('notes') or '').strip():
+            raise ValueError('Review requires an HTTP(S) evidence URL and nonempty notes')
+        if effective['website_status'] not in WEBSITE_STATUSES:
+            raise ValueError('Invalid website_status')
+        choices = {'activity': ('unknown', 'active', 'closed'), 'ownership': ('unknown', 'independent', 'chain'),
+                   'residential': ('unknown', 'yes', 'no'), 'service_fit': ('unknown', 'yes', 'no'),
+                   'delivery': ('unknown', 'mobile', 'fixed'), 'disposition': ('pending', 'rejected', 'contacted'),
+                   'identity_status': ('unknown', 'same_business', 'different_businesses', 'uncertain')}
+        for field, allowed in choices.items():
+            if effective[field] not in allowed:
+                raise ValueError('Invalid ' + field)
+        if effective['website_status'] == 'site_found' and not public_url(effective.get('verified_website')):
+            raise ValueError('site_found requires --verified-website with an HTTP(S) URL')
+        if effective['website_status'] == 'site_found' and not confirmable_site(effective['verified_website']):
+            raise ValueError('site_found requires a dedicated-domain or tenant-hosted business site with evidence and notes; social/directory/contact/shortener links cannot be confirmed as sites')
+        if effective.get('candidate_website') and not public_url(effective['candidate_website']):
+            raise ValueError('candidate_website requires an HTTP(S) URL')
+        # Only an explicit activity assertion binds the current review evidence to
+        # activity. A website/date-only correction retains the original activity basis.
+        if 'activity' in supplied or replace:
+            activity_basis = effective
+            values = (activity_basis.get('evidence_observed_at'), activity_basis.get('evidence_url'), activity_basis.get('notes'))
+        else:
+            values = tuple(previous.get(k, previous.get(fallback)) for k, fallback in zip(
+                ACTIVITY_EVIDENCE_FIELDS, ('evidence_observed_at', 'evidence_url', 'notes')))
+        effective.update(zip(ACTIVITY_EVIDENCE_FIELDS, values))
+        recorded_at = now()
         db.execute('INSERT INTO reviews(business_id,created_at,data) VALUES(?,?,?)', (bid, recorded_at, json.dumps(effective)))
         if effective.get('disposition') == 'contacted':
             b = next(b for b in all_businesses(db) if b['id'] == bid)
             for kind, value in suppression_keys(b):
                 db.execute('INSERT OR REPLACE INTO suppressions VALUES(?,?,?)', (kind, value, 'manually_marked_contacted'))
-    return {**effective, 'created_at': recorded_at}
+        return {**effective, 'created_at': recorded_at}
 
 
 def evaluate(b, config, suppression, today):

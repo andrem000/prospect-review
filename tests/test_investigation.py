@@ -115,6 +115,64 @@ class InvestigationTests(unittest.TestCase):
         self.assertEqual(history[0]['investigation_session'], saved['session_id'])
         self.assertEqual(history[1]['investigation_question'], 'website')
 
+    def test_cross_path_corrections_initialize_current_answers_without_stale_basis(self):
+        original = self.entry(website_status='no_site_found')
+        self.save({'website': original})
+        for path in ('cli', 'advanced'):
+            with self.subTest(path=path):
+                correction = self.entry(website_status='uncertain', candidate_website='https://candidate.example.com')
+                if path == 'cli':
+                    with closing(core.connect(self.workspace / 'review.sqlite3')) as db:
+                        core.review(db, self.bid, correction)
+                else:
+                    self.ok('POST', self.base + '/review', {'changes': correction})
+                current = self.state()
+                entry = current['questions']['website']
+                self.assertEqual(entry['website_status'], 'uncertain')
+                self.assertEqual(entry['candidate_website'], correction['candidate_website'])
+                self.assertEqual(entry['notes'], '')
+                self.assertEqual(entry['evidence_observed_at'], '')
+                self.assertFalse(current['saved_answers']['website']['basis_known'])
+                self.assertEqual(current['question_history']['website'], original)
+                # The normal notes-only editor draft starts from this response.
+                entry['notes'] = 'Only notes edited'
+                draft = dict(step=1, mode='workspace', questions={'website': entry})
+                self.draft(draft)
+                self.assertEqual(self.state()['draft'], draft)
+                self.assertEqual(self.request('POST', self.base + '/investigation',
+                    self.payload({'website': entry}, path))[0], 400)
+                self.assertEqual(self.ok('GET', self.base)['review']['website_status'], 'uncertain')
+                self.draft(None)
+
+    def test_undo_restores_cli_effective_answer_without_obsolete_question_snapshot(self):
+        original = self.entry(website_status='no_site_found')
+        self.save({'website': original})
+        correction = self.entry(website_status='uncertain', candidate_website='https://candidate.example.com')
+        self.ok('POST', self.base + '/review', {'changes': correction})
+        saved = self.save({'website': self.entry(website_status='no_site_found')}, 'second')
+        self.ok('POST', self.base + '/investigation/undo', dict(
+            session_id=saved['session_id'], review_revision=saved['review_revision']))
+        state = self.state()
+        self.assertEqual(state['questions']['website']['website_status'], 'uncertain')
+        self.assertEqual(state['questions']['website']['candidate_website'], correction['candidate_website'])
+        self.assertFalse(state['saved_answers']['website']['basis_known'])
+        self.assertEqual(state['question_history']['website'], original)
+        self.assertEqual(state['draft']['questions']['website']['website_status'], 'no_site_found')
+        self.assertEqual(state['questions']['website']['notes'], '')
+
+    def test_unfinished_draft_kept_separate_from_effective_correction(self):
+        original = self.entry(website_status='no_site_found')
+        self.save({'website': original})
+        draft = dict(step=1, mode='guided', questions={'website': {**original, 'notes': 'Unfinished'}})
+        self.draft(draft)
+        stale = self.payload({'website': original}, 'stale')
+        self.ok('POST', self.base + '/review', {'changes': self.entry(website_status='uncertain')})
+        state = self.state()
+        self.assertEqual(state['draft'], draft)
+        self.assertEqual(state['questions']['website']['website_status'], 'uncertain')
+        self.assertEqual(state['question_history']['website'], original)
+        self.assertEqual(self.request('POST', self.base + '/investigation', stale)[0], 409)
+
     def test_failure_in_second_core_review_is_atomic(self):
         self.draft(dict(step=0, mode='guided', questions={'identity': {'notes': 'Keep this draft'}}))
         before, counts = self.state(), self.counts()
@@ -240,7 +298,9 @@ class InvestigationTests(unittest.TestCase):
         self.assertIn('website_present', business['excluded_reasons'])
         state = self.state()
         self.assertEqual(state['draft']['questions'], submitted)
-        self.assertEqual(state['questions'], {})
+        self.assertEqual(state['questions']['activity']['activity'], 'active')
+        self.assertEqual(state['questions']['website']['website_status'], 'unreviewed')
+        self.assertEqual(state['question_history'], {})
         self.assertTrue(state['latest_session']['undone'])
         self.assertFalse(state['latest_session']['can_undo'])
         self.assertEqual(self.request('POST', self.base + '/investigation/undo', dict(session_id=saved['session_id'], review_revision=result['review_revision']))[0], 409)

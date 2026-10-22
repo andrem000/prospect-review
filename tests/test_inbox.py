@@ -226,6 +226,51 @@ class InboxTests(unittest.TestCase):
         self.assertEqual(self.reasons()[0]['id'], old_id)
         self.assertEqual(self.reasons()[0]['evidence_observed_at'], '2026-01-01')
 
+    def test_desk_and_inbox_share_effective_basis_after_cross_path_undo(self):
+        def business():
+            return core.evaluate(core.all_businesses(self.db)[0], self.config, set(), date(2026, 10, 1))
+
+        def save(questions, request_id):
+            return investigation.commit(self.db, 1, dict(
+                review_revision=investigation.revision(self.db, 1),
+                draft_revision=investigation.state(self.db, 1)[0],
+                request_id=request_id, questions=questions), business())
+
+        original = self.entry(website_status='no_site_found')
+        save({'website': original}, 'original')
+        # Returning to the same answer does not revive its superseded basis.
+        for status in ('uncertain', 'no_site_found'):
+            core.review(self.db, 1, self.entry(website_status=status))
+        save({'fit': self.entry(ownership='independent', residential='yes',
+                               service_fit='unknown', delivery='unknown')}, 'unrelated')
+        current_draft = dict(step=2, mode='workspace', questions={'activity': {'notes': 'Keep unfinished'}})
+        state = investigation.read(self.db, 1, business())
+        investigation.save_draft(self.db, 1, dict(review_revision=state['review_revision'],
+            draft_revision=state['draft_revision'], draft=current_draft))
+        investigation.undo(self.db, 1, dict(session_id=state['latest_session']['session_id'],
+            review_revision=state['review_revision']), business())
+        state = investigation.read(self.db, 1, business())
+        item = inbox.list_items(self.db, self.config)['items'][0]
+        self.assertEqual(state['saved_answers'], item['saved_answers'])
+        self.assertFalse(state['saved_answers']['website']['basis_known'])
+        self.assertEqual(state['questions']['website']['notes'], '')
+        self.assertEqual(state['question_history']['website'], original)
+        self.assertEqual(state['draft']['questions']['activity'], current_draft['questions']['activity'])
+        self.assertIn('fit', state['draft']['questions'])
+
+    def test_desk_legacy_and_carried_answers_use_only_proven_question_basis(self):
+        self.tagged('website', website_status='no_site_found')
+        core.review(self.db, 1, self.entry(identity_status='same_business', ownership='independent'))
+        business = core.evaluate(core.all_businesses(self.db)[0], self.config, set(), date(2026, 10, 1))
+        desk = investigation.read(self.db, 1, business)
+        item = inbox.list_items(self.db, self.config)['items'][0]
+        self.assertEqual(desk['saved_answers'], item['saved_answers'])
+        self.assertTrue(desk['saved_answers']['website']['basis_known'])
+        self.assertEqual(desk['questions']['website'], self.entry(website_status='no_site_found'))
+        for question in ('identity', 'fit'):
+            self.assertFalse(desk['saved_answers'][question]['basis_known'])
+            self.assertEqual(desk['questions'][question]['evidence_url'], '')
+
     def test_advisory_setting_does_not_change_qualification(self):
         self.tagged('website', website_status='no_site_found')
         self.config['advisory_review_days'] = 0

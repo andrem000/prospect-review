@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 — Unreleased
+
+- Keep the Investigation desk's saved answers aligned with newer guided, advanced and CLI corrections, without reviving superseded evidence.
+- Retain actionable identity warnings for conflicting initial imports and newly ambiguous source identities.
+- Serialize partial review updates so overlapping writers preserve newer decisions and caller-owned transactions.
+
 ## 0.5.0 — 2026-10-22
 
 - Compare reimports before confirmation and show meaningful source changes in a persistent Changes inbox.

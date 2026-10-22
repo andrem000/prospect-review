@@ -7,7 +7,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 
-from . import core, changes
+from . import core, changes, review_state
 
 
 class Conflict(Exception):
@@ -163,7 +163,9 @@ def read(db, bid, business):
         latest = dict(session_id=row['session_id'], questions=json.loads(row['submitted']),
                       review_revision=row['final_revision'], undone=bool(row['undone']),
                       can_undo=not row['undone'] and row['final_revision'] == current)
-    return dict(review_revision=current, draft_revision=draft_revision, draft=draft, questions=questions,
+    saved = review_state.saved_answers(business)
+    return dict(review_revision=current, draft_revision=draft_revision, draft=draft,
+                questions=review_state.editor_questions(saved), question_history=questions, saved_answers=saved,
                 can_review='suppressed_or_contacted' not in business['excluded_reasons'], latest_session=latest,
                 source_revision=changes.source_revision(db, bid), draft_source_revision=draft_source(db, bid),
                 source_changed=bool(draft and draft_source(db, bid) != changes.source_revision(db, bid)))

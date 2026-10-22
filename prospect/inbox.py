@@ -8,11 +8,10 @@ import json
 import re
 from datetime import date, datetime, timezone
 
-from . import core, investigation, research
+from . import core, investigation, research, review_state
 
 
-FIELDS = {q: tuple(fields) + (('verified_website', 'candidate_website') if q == 'website' else ())
-          for q, fields in investigation.CHOICES.items()}
+FIELDS = review_state.FIELDS
 
 
 def initialize(db):
@@ -29,49 +28,11 @@ def _digest(value):
 
 
 def _answers(review, question):
-    return {field: review.get(field, core.REVIEW_DEFAULTS.get(field)) for field in FIELDS[question]}
-
-
-def _reviewed(review, question):
-    return any(value != core.REVIEW_DEFAULTS.get(field) and value is not None
-               for field, value in _answers(review, question).items())
+    return review_state.answers(review, question)
 
 
 def _bases(db, business, tables):
-    """Associate evidence with effective answers, never with recording dates.
-
-    Tagged snapshots establish a question basis. Later legacy snapshots only
-    retain that association if all relevant answers are unchanged. Undo restores
-    its saved question snapshot, subject to the same answer comparison.
-    """
-    bases, reviewed, previous = {}, set(), {}
-    undo = {}
-    if 'investigation_sessions' in tables:
-        undo = {r['session_id']: json.loads(r['before_questions']) for r in db.execute(
-            'SELECT session_id,before_questions FROM investigation_sessions WHERE business_id=?', (business['id'],))}
-    for row in business.get('reviews', []):
-        for question in FIELDS:
-            if _reviewed(row, question):
-                reviewed.add(question)
-            if _answers(row, question) != _answers(previous, question):
-                bases.pop(question, None)
-        if row.get('investigation_undo') in undo:
-            bases = {q: entry for q, entry in undo[row['investigation_undo']].items()
-                     if q in FIELDS and _answers(entry, q) == _answers(row, q)}
-            reviewed.update(bases)
-        question = row.get('investigation_question')
-        if question in FIELDS and row.get('investigation_session'):
-            bases[question] = {key: row.get(key) for key in (*FIELDS[question], *investigation.EVIDENCE)}
-            reviewed.add(question)
-        previous = row
-    effective = business['review']
-    # Since v0.2 these explicit activity fields carry their own association,
-    # including through unrelated CLI reviews. Generic legacy evidence does not.
-    if 'activity' in reviewed and all(field in effective for field in core.ACTIVITY_EVIDENCE_FIELDS):
-        bases['activity'] = dict(activity=effective.get('activity'),
-            evidence_observed_at=effective['activity_evidence_observed_at'],
-            evidence_url=effective['activity_evidence_url'], notes=effective['activity_evidence_notes'])
-    return reviewed, bases
+    return review_state.resolve(business)
 
 
 def _age_reason(bid, question, basis, answers, today, days):
@@ -146,11 +107,7 @@ def list_items(db, config):
         items.append(dict(business_id=bid, name=business['name'], city=business['city'], state=business['state'],
             has_review=bool(business.get('reviews')), has_draft=bool(draft and json.loads(draft[0]) is not None),
             can_review='suppressed_or_contacted' not in evaluated['excluded_reasons'],
-            saved_answers={question: dict(answers=_answers(business['review'], question),
-                evidence_observed_at=(bases.get(question) or {}).get('evidence_observed_at'),
-                evidence_url=(bases.get(question) or {}).get('evidence_url'),
-                notes=(bases.get(question) or {}).get('notes'), basis_known=question in bases)
-                for question in FIELDS if question in reviewed},
+            saved_answers=review_state.saved_answers(business),
             excluded_reasons=evaluated['excluded_reasons'], reasons=reasons))
     return dict(items=items, counts=dict(pending=sum(any(not r['seen'] for r in item['reasons']) for item in items),
                                         seen=sum(any(r['seen'] for r in item['reasons']) for item in items)))

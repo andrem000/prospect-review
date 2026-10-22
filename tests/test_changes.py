@@ -6,7 +6,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from prospect import changes, core, providers
+from prospect import changes, core, inbox, providers
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +40,10 @@ class SourceChangesTests(unittest.TestCase):
         result = self.load(self.row())
         self.assertEqual(result['comparison']['new_businesses'], 1)
         self.assertEqual(self.events(), [])
+        self.assertEqual(result['comparison']['identity_warnings'], 0)
+        self.assertEqual(result['comparison']['changed_businesses'], 0)
+        self.assertEqual(inbox.list_items(self.db, dict(as_of='2026-10-22', trades={}))['counts'],
+                         dict(pending=0, seen=0))
         changes.initialize(self.db)
         self.assertEqual(self.events(), [])
         self.assertEqual(changes.batch_summary(self.db, result['batch_id']), result['comparison'])
@@ -155,6 +159,75 @@ class SourceChangesTests(unittest.TestCase):
         self.assertEqual(len(core.all_businesses(self.db)[0]['observations']), 5)
         self.load(self.row(activity='closed'))
         self.assertEqual(len(self.events()), 2)
+
+    def test_first_import_duplicate_identity_has_durable_seen_attention(self):
+        rows = [self.row(activity='closed'), self.row(activity='open')]
+        result = self.load(*rows)
+        self.assertEqual(result['comparison']['new_businesses'], 1)
+        self.assertEqual(result['comparison']['changed_businesses'], 0)
+        self.assertEqual(result['comparison']['identity_warnings'], 1)
+        event = self.events()[0]
+        self.assertEqual(event['kind'], 'identity_warning')
+        self.assertEqual((event['source'], event['source_id']), (self.manifest['source'], 'fictional-1'))
+        self.assertEqual(event['label'], 'Identity warning')
+        self.assertEqual(event['fields'], [])
+        self.assertEqual(event['questions'], ['identity'])
+        self.assertEqual(event['identity_context'], dict(business_ids=[1], observation_ids=[1, 2]))
+        self.assertIsNone(event['before_batch_id'])
+        self.assertTrue(any('Conflicting rows' in warning for warning in event['warnings']))
+        inbox.initialize(self.db)
+        config = dict(as_of='2026-10-22', trades={'painting': ['painting']})
+        attention = inbox.list_items(self.db, config)
+        self.assertEqual(attention['counts'], dict(pending=1, seen=0))
+        reason_id = attention['items'][0]['reasons'][0]['id']
+        inbox.set_seen(self.db, config, [reason_id], True)
+        # Reopen a persisted copy to verify attention and acknowledgement survive
+        # process lifetime, rather than merely surviving an in-memory read.
+        scratch = ROOT / '.test-temp/v0.5.1-identity-warnings'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as folder:
+            path = Path(folder) / 'attention.sqlite3'
+            disk = core.connect(path)
+            self.db.backup(disk)
+            disk.close()
+            disk = core.connect(path)
+            try:
+                reopened = inbox.list_items(disk, config)
+                self.assertEqual(reopened['counts'], dict(pending=0, seen=1))
+                self.assertEqual(reopened['items'][0]['reasons'][0]['id'], reason_id)
+                self.assertEqual(reopened['items'][0]['reasons'][0]['identity_context'], event['identity_context'])
+            finally:
+                disk.close()
+        repeated = self.load(*rows)
+        self.assertEqual(repeated['comparison']['identity_warnings'], 0)
+        self.assertEqual(repeated['comparison']['changed_businesses'], 0)
+        self.assertEqual(len(self.events()), 1)
+        self.assertEqual(inbox.list_items(self.db, config)['counts'], dict(pending=0, seen=1))
+        self.assertEqual(len(core.all_businesses(self.db)[0]['observations']), 4)
+
+    def test_new_ambiguous_alias_keeps_separate_identity_and_concrete_warning(self):
+        self.load(self.row(), self.row(source_id='second', address='2 Example Lane', phone='5035550199'))
+        self.assertEqual(self.events(), [])
+        ambiguous = self.row(source_id='third', phone='5035550199')
+        result = self.load(ambiguous)
+        self.assertEqual(result['comparison']['new_businesses'], 1)
+        self.assertEqual(result['comparison']['changed_businesses'], 0)
+        self.assertEqual(result['comparison']['additional_sources'], 0)
+        self.assertEqual(result['comparison']['identity_warnings'], 1)
+        self.assertEqual(len(core.all_businesses(self.db)), 3)
+        event = self.events()[0]
+        self.assertEqual(event['business_id'], 3)
+        self.assertEqual(event['kind'], 'identity_warning')
+        self.assertEqual(event['source_id'], 'third')
+        self.assertEqual(event['identity_context'], dict(business_ids=[1, 2, 3], observation_ids=[3]))
+        self.assertTrue(any('business IDs: 1, 2' in warning for warning in event['warnings']))
+        self.assertEqual(event['fields'], [])
+        repeated = self.load(ambiguous)
+        self.assertEqual(repeated['comparison']['identity_warnings'], 0)
+        self.assertEqual(repeated['comparison']['unchanged_rows'], 1)
+        self.assertEqual(len(self.events()), 1)
+        self.assertEqual(len(core.all_businesses(self.db)), 3)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0], 4)
 
     def test_reused_alias_retains_binding_with_prominent_warning(self):
         self.load(self.row())
