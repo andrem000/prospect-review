@@ -1,0 +1,11 @@
+{
+  "source": "synthetic",
+  "license": "synthetic",
+  "terms_url": "https://example.com/synthetic-fixtures",
+  "attribution": "Invented demonstration data; no real prospects",
+  "reviewed_at": "2026-10-15",
+  "retention_permitted": true,
+  "export_permitted": true,
+  "lead_discovery_permitted": true,
+  "notice_files": []
+}

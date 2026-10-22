@@ -1,0 +1,11 @@
+source_id,name,country,state,city,address,trade,phone,website,activity,observed_at,brand,source_url
+s1,Cedar Example Plumbing,US,TX,Austin,101 Example Lane,plumber,+1 512-555-0101,,active,2026-10-01,,https://example.com/directory/s1
+s2,Cedar Example Plumbing,US,TX,Austin,101 Example Lane,plumber,(512) 555-0101,,active,2026-10-01,,https://example.com/directory/s2
+s3,Elm Example Electric,US,NC,Raleigh,202 Example Lane,electrician,9195550102,https://facebook.com/elm-example,unknown,2026-09-01,,https://example.com/directory/s3
+s4,Maple Example HVAC,US,TX,Austin,303 Example Lane,hvac,5125550103,https://maple.example.com,active,2026-09-01,,https://example.com/directory/s4
+s5,National Example Plumbing,US,TX,Austin,404 Example Lane,plumber,5125550104,,active,2026-09-01,National Example,https://example.com/directory/s5
+s6,Closed Example Roofing,US,TX,Austin,505 Example Lane,roofer,5125550105,,permanently_closed,2026-09-01,,https://example.com/directory/s6
+s7,Contacted Example Cleaning,US,NC,Raleigh,606 Example Lane,cleaning,9195550106,,active,2026-09-01,,https://example.com/directory/s7
+s8,Non-US Example Plumbing,CA,ON,Toronto,707 Example Lane,plumber,4165550107,,active,2026-09-01,,https://example.com/directory/s8
+s9,Out of Region Example Plumbing,US,CA,Sacramento,808 Example Lane,plumber,9165550108,,active,2026-09-01,,https://example.com/directory/s9
+s10,Restaurant Example,US,TX,Austin,909 Example Lane,restaurant,5125550109,,active,2026-09-01,,https://example.com/directory/s10

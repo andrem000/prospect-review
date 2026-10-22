@@ -1,0 +1,7 @@
+include README.md LICENSE CONTRIBUTING.md CHANGELOG.md demo.py config.example.json rights.template.json
+recursive-include fixtures *.csv *.json
+recursive-include profiles *.json
+recursive-include prospect/data *.csv *.json
+recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include docs *.md

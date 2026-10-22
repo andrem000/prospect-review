@@ -1,0 +1,12 @@
+{
+  "source": "REPLACE_WITH_SOURCE_NAMESPACE",
+  "license": "REPLACE_WITH_APPLICABLE_LICENSES_OR_CONTRACT",
+  "terms_url": "https://example.com/replace-with-actual-source-terms",
+  "attribution": "REPLACE_WITH_REQUIRED_ATTRIBUTION",
+  "reviewed_at": "2026-10-15",
+  "release_or_access_date": "REPLACE_WITH_DATA_RELEASE_AND_ACCESS_DATE",
+  "retention_permitted": false,
+  "export_permitted": false,
+  "lead_discovery_permitted": false,
+  "notice_files": ["notices/REPLACE_WITH_ACTUAL_LICENSE_AND_NOTICE_FILES.txt"]
+}

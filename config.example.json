@@ -1,0 +1,70 @@
+{
+  "regions": [
+    {
+      "state": "TX",
+      "cities": [
+        "Austin"
+      ]
+    },
+    {
+      "state": "NC",
+      "cities": [
+        "Raleigh"
+      ]
+    }
+  ],
+  "trades": {
+    "plumbing": [
+      "plumber",
+      "plumbing",
+      "plumbing_service"
+    ],
+    "electrical": [
+      "electrician",
+      "electricians",
+      "electrical_service"
+    ],
+    "hvac": [
+      "hvac",
+      "heating_and_air_conditioning",
+      "hvac_contractor"
+    ],
+    "roofing": [
+      "roofer",
+      "roofing",
+      "roofing_contractor"
+    ],
+    "cleaning": [
+      "cleaning",
+      "house_cleaning",
+      "cleaning_service"
+    ],
+    "landscaping": [
+      "gardener",
+      "landscaping",
+      "landscaping_service"
+    ],
+    "painting": [
+      "painting",
+      "painter"
+    ],
+    "fencing_decks": [
+      "fence_and_gate_sales_service",
+      "deck_and_railing_sales_service"
+    ],
+    "residential_remodeling": [
+      "altering_and_remodeling_contractor",
+      "bathroom_remodeling",
+      "kitchen_remodeling"
+    ],
+    "name_screened_contractor": [
+      "contractor",
+      "building_contractor",
+      "carpenter"
+    ]
+  },
+  "chain_names": [
+    "National Example"
+  ],
+  "freshness_days": 180
+}

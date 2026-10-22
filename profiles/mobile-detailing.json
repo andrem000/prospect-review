@@ -1,0 +1,11 @@
+{
+  "profile": "mobile_detailing_pilot",
+  "regions": [{"state": "NC", "cities": ["Charlotte"]}, {"state": "TX", "cities": ["San Antonio"]}],
+  "trades": {"mobile_detailing": ["auto_detailing", "car_detailing", "mobile_auto_detailing", "car_wash"]},
+  "broad_categories": ["car_wash"],
+  "excluded_categories": ["automatic_car_wash", "self_service_car_wash", "car_wash_equipment"],
+  "service_scope": "service",
+  "delivery_scope": "mobile",
+  "chain_names": [],
+  "notes": "Consumer/commercial vehicle detailing. Mobile operation must be manually verified; no street-address requirement. Proposed aliases need provider-data validation. Storefront-only or equipment businesses are not automatically mobile. No acquisition performed."
+}

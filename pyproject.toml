@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prospect-review"
+version = "0.1.0"
+description = "Offline, evidence-preserving review of US service-business listings"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["offline", "sqlite", "data-review", "provenance", "cli"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/andrem000/prospect-review"
+Repository = "https://github.com/andrem000/prospect-review"
+Issues = "https://github.com/andrem000/prospect-review/issues"
+
+[project.scripts]
+prospect-review = "prospect.__main__:main"
+prospect = "prospect.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["prospect*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+prospect = ["data/*.csv", "data/*.json"]

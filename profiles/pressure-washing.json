@@ -1,0 +1,11 @@
+{
+  "profile": "pressure_washing_pilot",
+  "regions": [{"state": "NC", "cities": ["Charlotte"]}, {"state": "TX", "cities": ["San Antonio"]}],
+  "trades": {"pressure_washing": ["pressure_washing", "power_washing", "pressure_washing_service", "cleaning_service"]},
+  "broad_categories": ["cleaning_service"],
+  "excluded_categories": ["pressure_washer_sales", "equipment_rental"],
+  "service_scope": "service",
+  "delivery_scope": "any",
+  "chain_names": [],
+  "notes": "Residential/commercial exterior cleaning. Proposed alias profile, not a verified exhaustive Overture taxonomy mapping. Manual service-fit, activity and identity checks required. No pilot-region acquisition performed."
+}
