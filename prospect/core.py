@@ -362,9 +362,14 @@ def review(db, bid, data, replace=False):
             raise ValueError('candidate_website requires an HTTP(S) URL')
         # Only an explicit activity assertion binds the current review evidence to
         # activity. A website/date-only correction retains the original activity basis.
+        # Persist explicitness separately from the value: unknown can be a real
+        # assertion, whereas a default (including a replacement reset) is not.
+        effective['activity_asserted'] = ('activity' in supplied or
+            (not replace and previous.get('activity_asserted') is True))
         if 'activity' in supplied or replace:
-            activity_basis = effective
-            values = (activity_basis.get('evidence_observed_at'), activity_basis.get('evidence_url'), activity_basis.get('notes'))
+            # An omitted date means unknown for this new assertion. The merged
+            # generic date may belong to an entirely different question.
+            values = (supplied.get('evidence_observed_at'), supplied.get('evidence_url'), supplied.get('notes'))
         else:
             values = tuple(previous.get(k, previous.get(fallback)) for k, fallback in zip(
                 ACTIVITY_EVIDENCE_FIELDS, ('evidence_observed_at', 'evidence_url', 'notes')))

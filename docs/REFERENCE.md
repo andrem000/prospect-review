@@ -86,3 +86,5 @@ Reconciliation is an advanced local workflow for already-reviewed, hash-pinned s
 ## Errors and output
 
 CLI results are JSON on standard output. Handled input/database errors print `Error:` on standard error and return exit code `2`; successful commands return `0`. Keep the original source and rights manifest alongside any derived output. A completed command is not proof that its input assertions are true.
+
+An explicitly supplied activity assertion without `--evidence-observed-at` has an unknown observation date, even if an unrelated earlier check had a date. It cannot borrow that check’s freshness. Omitting activity entirely continues to preserve its existing evidence basis. An explicit `unknown` activity answer records an inconclusive check; an untouched default is not a check.

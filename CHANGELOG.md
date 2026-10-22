@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — Unreleased
+
+- Keep undated activity assertions undated instead of borrowing another check’s observation date; retain explicit inconclusive activity checks in the saved-answer view.
+- Preserve each draft’s saved-review context across reopening and require explicit comparison after a correction or unknown legacy context.
+- Preserve newer input while refreshing saved evidence, with edit controls locked during navigation transitions.
+
 ## 0.6.0 — 2026-10-22
 
 - Show each question's effective saved answer and evidence basis separately from unfinished drafts and superseded guided answers.

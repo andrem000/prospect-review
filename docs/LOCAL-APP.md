@@ -52,7 +52,7 @@ Guided review presents one question group at a time, with the same underlying ev
 
 Unfinished answers are saved as drafts inside the workspace, separately from review history. Switching business or view retains them, and saved drafts survive an app restart. Watch the draft status: a failed save must be retried before closing the app. Drafts do not affect qualification or appear in exports. Deferring a business keeps its draft without recording a review.
 
-If another tab or the CLI changes a review, stale edits are rejected rather than silently replacing newer decisions. Your unfinished input remains available so you can compare it with the latest saved record before retrying. Use one running app process per workspace; revision checks do not turn this into a shared multi-user service.
+If another tab or the CLI changes a review, stale edits are rejected rather than silently replacing newer decisions. Saved drafts retain their review context across restart. A changed or unknown legacy context requires explicit comparison with the latest saved work; keeping your draft does not certify changed source evidence. Your unfinished input remains available so you can compare it with the latest saved record before retrying. Use one running app process per workspace; revision checks do not turn this into a shared multi-user service.
 
 A material reimport also marks existing drafts as based on changed source evidence. Inspect the updated observations and use **Review updated evidence** before saving a decision. Your unfinished text remains intact. Undo retains the source context of restored answers, even when newer draft questions are present. Equivalent formatting-only imports do not require this step.
 

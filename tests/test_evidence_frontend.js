@@ -39,7 +39,7 @@ function harness(){
   const fetch=async(route,options)=>{const body=options.body?JSON.parse(options.body):undefined;calls.push({route,body});
     if(route.endsWith('/draft')){if(server.failDraft)throw Error('Injected autosave failure');server.snapshot.draft=clone(body.draft);server.snapshot.draft_revision++;server.snapshot.draft_source_revision=body.source_revision;return response({...server.snapshot,source_changed:body.source_revision!==server.snapshot.source_revision});}
     if(route.endsWith('/investigation')&&body){server.snapshot.review_revision++;server.snapshot.draft_revision++;server.snapshot.draft=null;Object.assign(server.snapshot.questions,clone(body.questions));for(const [key,answer] of Object.entries(body.questions))server.snapshot.saved_answers[key]={answers:{website_status:answer.website_status},basis_known:true,notes:answer.notes,evidence_url:answer.evidence_url,evidence_observed_at:answer.evidence_observed_at};if(server.failAfterCommit)server.failRead=true;return response({review_revision:server.snapshot.review_revision,draft_revision:server.snapshot.draft_revision,session_id:'saved-session',review:{}});}
-    if(route.endsWith('/investigation')){if(server.failRead)throw Error('Injected read failure');return response(server.snapshot);}
+    if(route.endsWith('/investigation')){if(server.onRead)server.onRead();if(server.failRead)throw Error('Injected read failure');return response(server.snapshot);}
     if(route==='/api/changes')return response({items:[],counts:{pending:0,seen:0}});
     if(route==='/api/state')return response({counts:{total:1},version:'fixture'});
     if(route.startsWith('/api/research'))return response({items:[]});
@@ -166,6 +166,51 @@ test('successful save with failed refresh keeps its saved summary and labels rea
   assert.equal(ui.S.investigation.saved_answers.website.notes,'Authoritative saved check');assert.equal(ui.S.investigation.saved_answers.website.basis_known,true);
   assert.match(text(ui.renderEvidence(ui.S.detail,'website')),/Selected change context could not be refreshed/);
   assert.doesNotMatch(text(ui.renderEvidence(ui.S.detail,'website')),/Selected change is no longer current/);
+});
+
+
+test('delayed saved-evidence refresh preserves text typed after its initial flush',async()=>{
+  const {ui,server,calls}=harness();
+  server.snapshot.draft={step:1,mode:'workspace',questions:{website:{...entry,notes:'Previously saved draft'}}};
+  ui.setupInvestigation(clone(server.snapshot));
+  const area=ui.renderEvidence(ui.S.detail,'website');
+  server.onRead=()=>{
+    const form=ui.renderQuestion(ui.S.detail,'website');
+    const notes=all(form).find(n=>n.tagName==='textarea');
+    notes.value='New text while refresh is pending';notes.listeners.input();
+  };
+  await click(find(area,'button','Refresh saved evidence'));
+  assert.equal(ui.S.investigation.edits.website.notes,'New text while refresh is pending');
+  assert.equal(ui.S.dirty,true);assert.equal(calls.filter(c=>c.route.endsWith('/draft')).length,0);
+  server.onRead=null;await ui.persistDraft();
+  assert.equal(server.snapshot.draft.questions.website.notes,'New text while refresh is pending');
+});
+
+test('failed refresh keeps input and allows retry without leaving navigation locked',async()=>{
+  const {ui,server}=harness();
+  ui.S.investigation.edits.website={...entry,notes:'Retain failed refresh'};
+  server.failRead=true;
+  await click(find(ui.renderEvidence(ui.S.detail,'website'),'button','Refresh saved evidence'));
+  assert.equal(ui.S.investigation.edits.website.notes,'Retain failed refresh');assert.equal(ui.S.navigating,false);
+  server.failRead=false;
+  server.snapshot.draft={step:1,mode:'workspace',questions:{website:{...entry,notes:'Retain failed refresh'}}};
+  await click(find(ui.renderEvidence(ui.S.detail,'website'),'button','Refresh saved evidence'));
+  assert.equal(ui.S.investigation.edits.website.notes,'Retain failed refresh');
+});
+
+test('resumed changed-review draft blocks commit until an explicit comparison resolves it',async()=>{
+  const {ui,server,calls,elements}=harness();
+  Object.assign(server.snapshot,{draft:{step:1,mode:'workspace',questions:{website:entry}},draft_review_revision:1,review_changed:true});
+  ui.setupInvestigation(clone(server.snapshot));
+  await ui.commitInvestigation(['website']);
+  assert.equal(calls.some(c=>c.route.endsWith('/investigation')&&c.body),false);
+  const box=elements.get('[data-draft-error]');
+  await click(find(box,'button','Compare latest saved work'));
+  await click(find(box,'button','Keep my answers as the draft'));
+  const write=calls.find(c=>c.route.endsWith('/draft'));
+  assert.equal(write.body.resolve_review_revision,3);
+  assert.equal(write.body.source_revision,'source-b');
+  assert.equal(ui.S.investigation.edits.website.website_status,'no_site_found');
 });
 
 })();

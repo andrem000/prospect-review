@@ -43,6 +43,10 @@ def resolve(business):
             reviewed.add(question)
         previous = row
     effective = business['review']
+    # Only newly recorded assertion metadata can establish a default-valued
+    # activity check; legacy generic evidence cannot prove it was supplied.
+    if effective.get('activity_asserted') is True:
+        reviewed.add('activity')
     if 'activity' in reviewed and all(f in effective for f in core.ACTIVITY_EVIDENCE_FIELDS):
         bases['activity'] = dict(activity=effective.get('activity'),
             evidence_observed_at=effective['activity_evidence_observed_at'],

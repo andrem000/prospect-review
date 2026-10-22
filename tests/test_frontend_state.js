@@ -182,4 +182,19 @@ for(const message of ['Unrelated newer export failure','Injected draft connectio
     assert.equal(elements.get('#notice').textContent,message);
   });
 }
+
+test('advanced explicit activity sends its unchanged visible observation date',async()=>{
+  const {desk,server}=harness();
+  const section=desk.reviewForm({id:1,review:{activity:'active',evidence_observed_at:'2026-10-01'}});
+  const nodes=section.querySelectorAll(),form=nodes.find(n=>n.tagName==='form');
+  const activityLabel=nodes.find(n=>n.tagName==='label'&&n.children.some(c=>c.textContent==='Record a new activity check using this evidence'));
+  assert.ok(activityLabel);activityLabel.children.find(n=>n.tagName==='input').checked=true;
+  nodes.find(n=>n.tagName==='input'&&n.type==='url').value='https://example.com/new-activity';
+  nodes.find(n=>n.tagName==='textarea').value='Explicit activity check on the displayed date';
+  form.listeners.input();await form.listeners.submit({preventDefault(){}});
+  const write=server.calls.find(c=>c.route.endsWith('/review'));
+  assert.equal(write.body.changes.activity,'active');
+  assert.equal(write.body.changes.evidence_observed_at,'2026-10-01');
+});
+
 })();

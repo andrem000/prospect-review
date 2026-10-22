@@ -42,6 +42,13 @@ def initialize(db):
             db.execute('ALTER TABLE investigation_state ADD COLUMN draft_source_revision TEXT')
         if 'source_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_sessions)')}:
             db.execute('ALTER TABLE investigation_sessions ADD COLUMN source_revision TEXT')
+        if 'draft_review_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_state)')}:
+            # Existing drafts have no provable review baseline. NULL is durable
+            # unknown context, never an invitation to backfill today's revision.
+            db.execute('ALTER TABLE investigation_state ADD COLUMN draft_review_revision INTEGER')
+        for field in ('before_draft_review_revision', 'before_review_revision'):
+            if field not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_sessions)')}:
+                db.execute('ALTER TABLE investigation_sessions ADD COLUMN ' + field + ' INTEGER')
         # Treat existing v0.4 work as the upgrade baseline, without changing answers.
         for row in db.execute('SELECT business_id FROM investigation_state WHERE draft_source_revision IS NULL').fetchall():
             db.execute('UPDATE investigation_state SET draft_source_revision=? WHERE business_id=?',
@@ -69,10 +76,34 @@ def draft_source(db, bid):
     return row[0] if row else None
 
 
-def write_state(db, bid, draft_revision, draft, questions, source_revision=None):
+_PRESERVE_BASELINE = object()
+
+
+def draft_review(db, bid):
+    row = db.execute('SELECT draft_review_revision FROM investigation_state WHERE business_id=?', (bid,)).fetchone()
+    return row[0] if row else None
+
+
+def review_changed(db, bid):
+    _, draft, _ = state(db, bid)
+    return bool(draft is not None and draft_review(db, bid) != revision(db, bid))
+
+
+def check_review_baseline(db, bid):
+    if review_changed(db, bid):
+        raise Conflict('Saved review changed or the draft review baseline is unknown; compare the latest saved work and explicitly resolve it before saving. Your unfinished draft is preserved.')
+
+
+def write_state(db, bid, draft_revision, draft, questions, source_revision=None,
+                review_baseline=_PRESERVE_BASELINE):
     source_revision = source_revision or draft_source(db, bid) or changes.source_revision(db, bid)
-    db.execute('INSERT OR REPLACE INTO investigation_state(business_id,draft_revision,draft,questions,draft_source_revision) VALUES(?,?,?,?,?)',
-               (bid, draft_revision, encoded(draft), encoded(questions), source_revision))
+    if draft is None:
+        review_baseline = None
+    elif review_baseline is _PRESERVE_BASELINE:
+        _, previous, _ = state(db, bid)
+        review_baseline = draft_review(db, bid) if previous is not None else revision(db, bid)
+    db.execute('INSERT OR REPLACE INTO investigation_state(business_id,draft_revision,draft,questions,draft_source_revision,draft_review_revision) VALUES(?,?,?,?,?,?)',
+               (bid, draft_revision, encoded(draft), encoded(questions), source_revision, review_baseline))
 
 
 def check_source(db, bid, data, allow_stale=False):
@@ -165,6 +196,7 @@ def read(db, bid, business):
                       can_undo=not row['undone'] and row['final_revision'] == current)
     saved = review_state.saved_answers(business)
     return dict(review_revision=current, draft_revision=draft_revision, draft=draft,
+                draft_review_revision=draft_review(db, bid), review_changed=review_changed(db, bid),
                 questions=review_state.editor_questions(saved), question_history=questions, saved_answers=saved,
                 can_review='suppressed_or_contacted' not in business['excluded_reasons'], latest_session=latest,
                 source_revision=changes.source_revision(db, bid), draft_source_revision=draft_source(db, bid),
@@ -172,17 +204,25 @@ def read(db, bid, business):
 
 
 def save_draft(db, bid, data):
-    checked_keys(data, ('review_revision', 'draft_revision', 'source_revision', 'draft'), ('review_revision', 'draft_revision', 'draft'))
+    checked_keys(data, ('review_revision', 'draft_revision', 'source_revision', 'draft', 'resolve_review_revision'), ('review_revision', 'draft_revision', 'draft'))
+    if 'resolve_review_revision' in data and (type(data['resolve_review_revision']) is not int or data['resolve_review_revision'] < 0):
+        raise ValueError('resolve_review_revision must be a nonnegative integer')
     check_draft(data['draft'])
     with db:
         db.execute('BEGIN IMMEDIATE')
         number, _, questions = check_revisions(db, bid, data)
+        review_baseline = _PRESERVE_BASELINE
+        if 'resolve_review_revision' in data:
+            if data['resolve_review_revision'] != revision(db, bid):
+                raise Conflict('Saved review changed again; compare the latest saved work before resolving')
+            review_baseline = data['resolve_review_revision']
         source_revision = check_source(db, bid, data, allow_stale=True)
         if data['draft'] is not None and contact_excluded(db, bid):
             raise ValueError('Contact-excluded businesses cannot be investigated')
-        write_state(db, bid, number + 1, data['draft'], questions, source_revision)
+        write_state(db, bid, number + 1, data['draft'], questions, source_revision, review_baseline)
     return dict(review_revision=revision(db, bid), draft_revision=number + 1, draft=data['draft'],
                 source_revision=changes.source_revision(db, bid), draft_source_revision=source_revision,
+                draft_review_revision=draft_review(db, bid), review_changed=review_changed(db, bid),
                 source_changed=bool(data['draft'] and source_revision != changes.source_revision(db, bid)))
 
 
@@ -201,6 +241,9 @@ def commit(db, bid, data, business):
     check_questions(data['questions'])
     data_version = db.execute('PRAGMA data_version').fetchone()[0]
     number, draft, questions = check_revisions(db, bid, data)
+    check_review_baseline(db, bid)
+    before_draft_review_revision = draft_review(db, bid)
+    before_review_revision = revision(db, bid)
     source_revision = check_source(db, bid, data)
     if 'suppressed_or_contacted' in business['excluded_reasons']:
         raise ValueError('Contact-excluded businesses cannot be investigated')
@@ -227,9 +270,10 @@ def commit(db, bid, data, business):
                       source_revision=source_revision, source_changed=False)
         with staged:
             write_state(staged, bid, number + 1, None, {**questions, **data['questions']}, source_revision)
-            staged.execute('INSERT INTO investigation_sessions VALUES(?,?,?,?,?,?,?,?,?,?,0,?)',
+            staged.execute('INSERT INTO investigation_sessions(session_id,business_id,request_id,payload,result,before_review,before_questions,submitted,before_draft,final_revision,undone,source_revision,before_draft_review_revision,before_review_revision) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?,?)',
                            (session_id, bid, request_id, payload, encoded(result), encoded(before_review),
-                            encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision))
+                            encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision,
+                            before_draft_review_revision, before_review_revision))
         # Publish the staged delta in one live transaction. Holding SQLite's
         # writer lock and checking data_version also protects against a second
         # server/CLI writer. Never overwrite their imports or suppressions with
@@ -244,15 +288,17 @@ def commit(db, bid, data, business):
             if db.execute('PRAGMA data_version').fetchone()[0] != data_version:
                 raise Conflict('Workspace changed while saving; reload before retrying')
             check_revisions(db, bid, data)
+            check_review_baseline(db, bid)
             check_source(db, bid, data)
             if contact_excluded(db, bid):
                 raise ValueError('Contact-excluded businesses cannot be investigated')
             db.executemany('INSERT INTO reviews(id,business_id,created_at,data) VALUES(?,?,?,?)',
                            [tuple(row) for row in staged.execute('SELECT * FROM reviews WHERE id>? ORDER BY id', (first_new_id,))])
             write_state(db, bid, number + 1, None, {**questions, **data['questions']}, source_revision)
-            db.execute('INSERT INTO investigation_sessions SELECT ?,?,?,?,?,?,?,?,?,?,0,?',
+            db.execute('INSERT INTO investigation_sessions(session_id,business_id,request_id,payload,result,before_review,before_questions,submitted,before_draft,final_revision,undone,source_revision,before_draft_review_revision,before_review_revision) SELECT ?,?,?,?,?,?,?,?,?,?,0,?,?,?',
                        (session_id, bid, request_id, payload, encoded(result), encoded(before_review),
-                        encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision))
+                        encoded(questions), encoded(data['questions']), encoded(draft), final_revision, source_revision,
+                        before_draft_review_revision, before_review_revision))
     return result
 
 
@@ -276,6 +322,7 @@ def undo(db, bid, data, business):
         restored.update(investigation_undo=row['session_id'])
         recorded = core.now()
         previous_draft = current_draft or json.loads(row['before_draft'])
+        current_baseline = draft_review(db, bid)
         draft = dict(step=previous_draft['step'] if previous_draft else 0,
                      mode=previous_draft['mode'] if previous_draft else 'workspace',
                      questions={**json.loads(row['submitted']), **(current_draft['questions'] if current_draft else {})})
@@ -286,6 +333,17 @@ def undo(db, bid, data, business):
         session_contributes = any(q not in (current_draft or {}).get('questions', {}) for q in json.loads(row['submitted']))
         if session_contributes and row['source_revision'] != changes.source_revision(db, bid):
             restored_source = row['source_revision']
-        write_state(db, bid, number + 1, draft, json.loads(row['before_questions']), restored_source)
+        # Undo restores the exact pre-session effective review. Only baseline
+        # context proven against that same snapshot can follow its compensating
+        # revision. A newer draft authored against the submitted review, or a
+        # legacy session with unknown context, still needs explicit comparison.
+        session_baseline = (row['before_draft_review_revision'] if json.loads(row['before_draft']) is not None
+                            else row['before_review_revision'])
+        restored_baseline = current_baseline if current_draft is not None else session_baseline
+        if session_contributes and session_baseline != row['before_review_revision']:
+            restored_baseline = None
+        if restored_baseline is not None and restored_baseline == row['before_review_revision']:
+            restored_baseline = revision(db, bid)
+        write_state(db, bid, number + 1, draft, json.loads(row['before_questions']), restored_source, restored_baseline)
         db.execute('UPDATE investigation_sessions SET undone=1 WHERE session_id=?', (row['session_id'],))
     return dict(review_revision=revision(db, bid), draft_revision=number + 1, review={**restored, 'created_at': recorded})

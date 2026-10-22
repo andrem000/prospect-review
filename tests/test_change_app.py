@@ -306,9 +306,14 @@ class InvestigationMigrationTests(TestCase):
         with closing(core.connect(self.path)) as db:
             revision = changes.source_revision(db, 1)
             for table in ('investigation_state', 'investigation_sessions'):
-                rows = [tuple(r) for r in db.execute('SELECT * FROM ' + table)]
-                self.assertEqual([r[:-1] for r in rows], self.before[table])
-                self.assertTrue(all(r[-1] == revision for r in rows))
+                legacy_columns = ('business_id,draft_revision,draft,questions' if table == 'investigation_state'
+                                  else 'session_id,business_id,request_id,payload,result,before_review,before_questions,submitted,before_draft,final_revision,undone')
+                self.assertEqual([tuple(r) for r in db.execute('SELECT ' + legacy_columns + ' FROM ' + table)], self.before[table])
+                source_column = 'draft_source_revision' if table == 'investigation_state' else 'source_revision'
+                self.assertTrue(all(r[source_column] == revision for r in db.execute('SELECT * FROM ' + table)))
+                baseline_columns = ('draft_review_revision' if table == 'investigation_state'
+                                    else 'before_draft_review_revision,before_review_revision')
+                self.assertTrue(all(value is None for row in db.execute('SELECT ' + baseline_columns + ' FROM ' + table) for value in row))
             self.assertEqual([tuple(r) for r in db.execute('SELECT * FROM reviews')], self.before['reviews'])
 
     def test_failed_backfill_rolls_back_schema_and_preserves_legacy_rows(self):
