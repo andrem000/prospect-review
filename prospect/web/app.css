@@ -13,10 +13,10 @@
 .with-detail .selection-bar{flex-wrap:wrap;padding:12px;gap:6px}
 .with-detail .selection-bar .small{flex-basis:100%}
 .with-detail .selection-bar button{font-size:11px;padding:5px 7px}
-.with-detail td,.with-detail th{padding:13px 9px}
-.with-detail td:nth-child(n+3),.with-detail th:nth-child(n+3){display:none}
-.with-detail td:first-child,.with-detail th:first-child{padding-left:12px;width:30px}
-.with-detail td .record-name{font-size:12px;line-height:1.4}
+.with-detail .queue-results > .table-wrap > table td,.with-detail .queue-results > .table-wrap > table th{padding:13px 9px}
+.with-detail .queue-results > .table-wrap > table td:nth-child(n+3),.with-detail .queue-results > .table-wrap > table th:nth-child(n+3){display:none}
+.with-detail .queue-results > .table-wrap > table td:first-child,.with-detail .queue-results > .table-wrap > table th:first-child{padding-left:12px;width:30px}
+.with-detail .queue-results > .table-wrap > table td .record-name{font-size:12px;line-height:1.4}
 .with-detail .table-footer{padding:12px;flex-wrap:wrap;font-size:11px;gap:8px}
 .with-detail .table-footer button{font-size:11px}
 .investigation{min-width:0;overflow:hidden}
@@ -148,6 +148,17 @@
 @media(max-width:700px){.research-assistance{padding:12px}.research-card{padding:12px}.research-form>.primary{width:100%}.research-toolbar{align-items:flex-start}.research-clues li{line-height:1.65}}
 
 /* Changes inbox comparisons. */
+.effective-answer{border:1px solid #cbd7c6;border-radius:9px;padding:16px;margin:18px 0;background:#f5f8f0;min-width:0}
+.effective-answer h4,.source-group h4,.retained-signals h4{font-size:13px;margin:0 0 10px}
+.effective-answer .key-values{margin:12px 0;font-size:12px}.effective-answer .key-values>div{min-width:0}.effective-answer .key-values dd{overflow-wrap:anywhere}
+.effective-answer>p,.effective-answer>a{margin-top:9px;font-size:12px}.basis-status{font-weight:650;color:var(--green)}
+.draft-comparison{border-left:3px solid #b69854;margin-top:17px;padding:13px;background:#fffcf3}.historical-answer{padding:12px;background:#fafaf7}
+.evidence-notes{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6}
+.source-heading{margin:22px 0 9px}.source-group{margin-top:18px;min-width:0;border-top:1px solid var(--line);padding-top:16px}.source-group>.evidence-card{margin-bottom:8px}.source-history{margin:0 0 18px;padding-left:12px;border-left:2px solid var(--line)}
+.source-history>summary,.effective-answer summary,.accumulated-links>summary{padding:12px 0;font-size:12px;cursor:pointer;min-height:44px}.source-group .evidence-card h4{font-size:15px}.source-group pre{max-width:100%;overflow:auto}
+.selected-change{margin:17px 0}.selected-change .change-reason{margin-top:9px;background:#fcfaf2}.selected-change .change-values{font-size:12px}
+.retained-signals{background:#faf5ec;border:1px solid #e1d4bd;padding:15px;border-radius:8px;margin:20px 0;overflow-wrap:anywhere}.retained-signals article+article{border-top:1px solid #e1d4bd;padding-top:12px;margin-top:12px}.retained-signals h5{font-size:12px;margin:0 0 6px}.retained-signals p{margin-top:6px}
+@media(max-width:700px){.effective-answer{padding:12px}.effective-answer .key-values{grid-template-columns:1fr}.source-history{padding-left:8px}.selected-change .change-values td,.selected-change .change-values th{padding:5px}.source-group h4{overflow-wrap:anywhere}}
 .change-values th:first-child,.change-values td:first-child{width:18%}.change-values th:nth-child(2),.change-values td:nth-child(2),.change-values th:nth-child(3),.change-values td:nth-child(3){width:41%}
 .changes-results{display:grid;gap:18px}.change-reason{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.change-reason h4{margin:0 0 8px}.change-reason>p,.change-reason>a{display:block;margin:8px 0}.change-reason>button{margin:10px 8px 0 0}.change-values{width:100%;table-layout:fixed;margin:12px 0}.change-values td,.change-values th{white-space:normal;overflow-wrap:anywhere;vertical-align:top}.import-comparison{margin-top:24px}.changes-results>.actions{align-items:center}
 @media(max-width:700px){.change-reason{padding:11px}.change-values td,.change-values th{padding:7px;font-size:11px}}

@@ -35,7 +35,7 @@
   window.addEventListener('beforeunload',e=>{if(S.dirty){e.preventDefault();e.returnValue='';}});
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>guard(()=>navigate(b.dataset.view))));
   async function state() {S.state=await api('/api/state');$('#version').textContent=`Version ${S.state.version}`;$('#workspace-name').textContent=S.state.workspace||'Local workspace';}
-  function navigate(view) { S.returnToChanges=false; S.view=view;detailSerial++;S.detail=null;S.investigation=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
+  function navigate(view) { S.selectedChange=null; S.returnToChanges=false; S.view=view;detailSerial++;S.detail=null;S.investigation=null;S.dirty=false;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});render(); }
   function render() {content.replaceChildren(); if(!S.state)return; if(S.view==='queue')renderQueue();if(S.view==='import')renderImport();if(S.view==='exports')renderExports();if(S.view==='settings')renderSettings();if(S.view==='changes')renderChanges();}
   function stats() {const box=el('div','stats');[['total','Businesses'],['candidates','Candidates'],['reviewed','Reviewed'],['qualified','Qualified'],['excluded','Excluded']].forEach(([key,label])=>append(box,append(el('div',`stat ${key==='candidates'?'featured':''}`),el('strong','',S.state.counts[key]??0),el('span','',label))));return box;}
   function queueFilterSummary(total) {
@@ -99,11 +99,13 @@
     if(!investigation.business||investigation.business.id!==id)throw new Error('The investigation snapshot is incomplete. Reload the application before reviewing.');
     return investigation;
   }
-  async function openDetail(id,question) {
+  async function openDetail(id,question,reasonId) {
     const serial=++detailSerial;
     try {
       const investigation=await deskSnapshot(id);
       if(serial!==detailSerial || S.view!=='queue')return;
+      if(reasonId)S.selectedChange={business_id:id,reason_id:reasonId};
+      else if(S.selectedChange?.business_id!==id || !S.returnToChanges)S.selectedChange=null;
       S.detail=investigation.business;
       S.nextCandidates=null;
       setupInvestigation(investigation);
@@ -385,12 +387,12 @@
       append(box,el('p','small','Your answers are retained. Load the newer review for comparison, then explicitly keep your draft or use the newer draft.'),button('Compare latest saved work',async()=>{
         try {
           const latest=await deskSnapshot(S.detail.id);
-          if(latest.source_revision!==undefined&&latest.source_revision!==inv.source_revision&&latest.review_revision===inv.review_revision&&latest.draft_revision===inv.draft_revision){inv.source_changed=true;inv.current_source_revision=latest.source_revision;inv.conflict=false;inv.error=null;inv.request=null;render();focusDesk();return;}
+          if(latest.source_revision!==undefined&&latest.source_revision!==inv.source_revision&&latest.review_revision===inv.review_revision&&latest.draft_revision===inv.draft_revision){S.detail=latest.business;refreshEvidenceModel(inv,latest);inv.source_changed=true;inv.current_source_revision=latest.source_revision;inv.conflict=false;inv.error=null;inv.request=null;render();focusDesk();return;}
           box.replaceChildren(el('p','callout warning','Compare before replacing the newer unfinished draft. No answers have been submitted.'),jsonDetails('Newer saved questions',latest.questions),jsonDetails('Newer unfinished draft',latest.draft),jsonDetails('Your retained answers',inv.edits));
           append(box,button('Keep my answers as the draft',async()=>{
             S.detail=latest.business;inv.review_revision=latest.review_revision;inv.draft_revision=latest.draft_revision;
             inv.source_changed=latest.source_revision!==inv.source_revision;inv.current_source_revision=latest.source_revision;
-            inv.questions=latest.questions;inv.can_review=latest.can_review;inv.latest_session=latest.latest_session;
+            refreshEvidenceModel(inv,latest);
             inv.conflict=false;inv.error=null;inv.sequence++;inv.request=null;
             try {await persistDraft();resolveDeskNotice('Conflict resolved. Your answers are saved as the local draft.');render();focusDesk();}catch(e){showDeskError(e);}
           }),button('Use newer saved work',()=>{S.detail=latest.business;setupInvestigation(latest);resolveDeskNotice('Conflict resolved. The newer saved work is loaded.');render();focusDesk();}));
@@ -432,7 +434,7 @@
       const node=button(mode==='workspace'?'Investigation desk':'Guided review',()=>changeDesk(i=>{i.mode=mode;i.summary=false;}));
       node.setAttribute('aria-pressed',String(inv.mode===mode));return node;
     }));
-    append(desk,append(el('header','desk-head'),append(el('div'),el('p','eyebrow','ONE BUSINESS · FOUR QUESTIONS'),title,el('p','detail-meta',[b.address,b.city,b.state].filter(Boolean).join(', ')),append(el('div','tags'),el('span','pill',human(b.queue_status)),...(b.trades||[]).map(t=>el('span','pill muted',human(t))))),append(el('div','desk-head-actions'),button(S.returnToChanges?'← Back to changes':'← Queue',()=>guard(()=>{if(S.returnToChanges){navigate('changes');}else{S.detail=null;S.investigation=null;render();}})),modes)));
+    append(desk,append(el('header','desk-head'),append(el('div'),el('p','eyebrow','ONE BUSINESS · FOUR QUESTIONS'),title,el('p','detail-meta',[b.address,b.city,b.state].filter(Boolean).join(', ')),append(el('div','tags'),el('span','pill',human(b.queue_status)),...(b.trades||[]).map(t=>el('span','pill muted',human(t))))),append(el('div','desk-head-actions'),button(S.returnToChanges?'← Back to changes':'← Queue',()=>guard(()=>{if(S.returnToChanges){navigate('changes');}else{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}})),modes)));
     if(inv.source_changed)append(desk,append(el('div','callout warning'),el('p','','Source evidence changed since this draft began. Your answers are retained. Review the updated evidence before saving a decision.'),button('Review updated evidence',()=>reviewUpdatedEvidence())));
     if(b.excluded_reasons?.length)append(desk,el('p',`desk-restriction callout ${inv.can_review?'warning':''}`,inv.can_review?`Excluded from candidates: ${b.excluded_reasons.map(human).join(' · ')}. Evidence can be corrected below.`:'Durable contact exclusion · read-only. This business cannot be reviewed or contacted through this workflow.'));
     const nav=el('nav','question-nav');nav.setAttribute('aria-label','Review questions');
@@ -461,29 +463,103 @@
     return desk;
   }
 
+  function refreshEvidenceModel(inv,latest) {
+    for(const key of ['questions','saved_answers','question_history','evidence','can_review','latest_session'])inv[key]=latest[key];
+  }
+
+  function lazyDetails(title,build,cls='') {
+    const details=el('details',cls);let loaded=false;
+    append(details,el('summary','',title));
+    details.addEventListener('toggle',()=>{if(details.open&&!loaded){loaded=true;append(details,build());}});
+    return details;
+  }
+
+  function knownObservationDate(value) {
+    if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
+    const parsed=new Date(value+'T00:00:00Z');
+    return !Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value&&value<=new Date().toISOString().slice(0,10);
+  }
+
+  function answerDefinition(entry,key) {
+    const fields=questionFields[key].map(([field])=>field).concat(key==='website'?['verified_website','candidate_website']:[]);
+    return definition(fields.map(field=>[human(field),human(entry[field]||'not supplied')]));
+  }
+
+  function renderSavedEvidence(key) {
+    const inv=S.investigation,saved=inv.saved_answers?.[key],box=el('section','effective-answer');
+    append(box,el('h4','','Effective saved answer'));
+    if(!saved)append(box,el('p','small','No saved answer for this question. Imported observations are not a human check.'));
+    else {
+      append(box,answerDefinition(saved.answers||{},key),el('p','basis-status',saved.basis_known?'Evidence association known':'Evidence basis unknown'));
+      append(box,el('p','small',knownObservationDate(saved.evidence_observed_at)?`Evidence observed: ${saved.evidence_observed_at}`:'Evidence observation date: unknown'));
+      if(saved.basis_known)append(box,saved.evidence_url?link(saved.evidence_url,'Saved checked evidence ↗'):el('p','small','Checked evidence URL: unknown'),saved.notes?el('p','evidence-notes',saved.notes):el('p','small','Checked evidence notes: unknown'));
+      else append(box,el('p','small','No evidence can be reliably associated with this answer. Check the evidence before saving a new decision.'));
+    }
+    const draft=inv.edits[key];
+    if(draft)append(box,append(el('article','draft-comparison'),el('h4','','Unfinished draft · separate from effective answer'),answerDefinition(draft,key),el('p','small',`Draft evidence observed: ${draft.evidence_observed_at||'Not supplied'}`),draft.notes?el('p','evidence-notes',draft.notes):null,el('p','small','These edits have not replaced the effective saved answer.')));
+    const historical=inv.question_history?.[key],current=inv.questions?.[key]||{};
+    if(historical&&Object.keys({...historical,...current}).some(field=>(historical[field]||'')!==(current[field]||'')))append(box,lazyDetails('Earlier guided answer · superseded history',()=>append(el('div','historical-answer'),answerDefinition(historical,key),el('p','small',`Earlier evidence observed: ${historical.evidence_observed_at||'Unknown'}`),el('p','evidence-notes',historical.notes||'No notes recorded'),historical.evidence_url?link(historical.evidence_url,'Earlier checked evidence ↗'):null,el('p','small','Retained for history; this is not the effective answer or its evidence basis.'))));
+    return box;
+  }
+
+  function selectedChangeContext(key) {
+    const selected=S.selectedChange,inv=S.investigation;
+    if(!selected||selected.business_id!==S.detail?.id)return null;
+    if(!inv.evidence)return el('p','callout warning','Selected change context could not be refreshed. Reload saved evidence to compare the current reason.');
+    const reason=(inv.evidence.change_reasons||[]).find(r=>r.id===selected.reason_id);
+    if(!reason)return el('p','callout','Selected change is no longer current. Its saved decisions and source history remain available; no attention was automatically marked seen.');
+    const questions=reason.questions?.length?reason.questions:[reason.question||'identity'];
+    if(!questions.includes(key))return el('p','small',`Selected change concerns: ${questions.map(q=>questionLabels[q]||human(q)).join(', ')}. Open that question to compare its context.`);
+    return append(el('section','selected-change'),el('p','eyebrow','SELECTED CHANGE · CURRENT CONTEXT'),changeReason(reason));
+  }
+
+  function observationCard(o,key,b,latest=false) {
+    const card=el('article','evidence-card');
+    append(card,el('p','eyebrow',latest?'LATEST IMPORTED FOR THIS SOURCE':'EARLIER IMPORT · RETAINED HISTORY'),el('h4','',o.name||b.name),el('p','evidence-location',[o.address,o.city,o.state].filter(Boolean).join(', ')||'Location not supplied'));
+    if(key==='identity')append(card,el('p','',`Phones: ${listValue(o.phones)||'Not supplied'}`));
+    if(key==='website')append(card,el('p','',`Website fields: ${listValue(o.websites)||'Not supplied — absence is unverified'}`));
+    if(key==='activity')append(card,el('p','',`Source activity signal: ${o.activity?human(o.activity):'Not supplied'}`));
+    if(key==='fit')append(card,el('p','',`Categories: ${listValue(o.categories)||'Not supplied'}`));
+    append(card,el('p','small',`Import batch: ${o.batch_id??'Not recorded'} · Observed by source: ${dateText(o.observed_at)}`),el('p','small','Import order is separate from observation date.'),o.source_url?link(o.source_url,'Open source ↗'):el('p','small','Source URL not supplied'),lazyDetails('Inspect original observation',()=>el('pre','',JSON.stringify(o,null,2))));
+    return card;
+  }
+
+  function sourceGroups(b) {
+    if(S.investigation.evidence)return S.investigation.evidence.source_groups||[];
+    const groups=new Map();
+    for(const o of b.observations||[]){const id=JSON.stringify([o.source,o.source_id]);if(!groups.has(id))groups.set(id,{source:o.source,source_id:o.source_id,history:[],observation_count:0});const group=groups.get(id);if(group.latest)group.history.unshift(group.latest);group.latest=o;group.observation_count++;}
+    return [...groups.values()];
+  }
+
   function renderEvidence(b,key) {
     const area=el('section','desk-evidence');
-    append(area,el('p','eyebrow',`QUESTION ${S.investigation.step+1} OF 4`),el('h3','desk-question',questionInfo[key][0]),el('p','desk-help',questionInfo[key][1]));
+    append(area,el('p','eyebrow',`QUESTION ${S.investigation.step+1} OF 4`),el('h3','desk-question',questionInfo[key][0]),el('p','desk-help',questionInfo[key][1]),selectedChangeContext(key),renderSavedEvidence(key));
     if(key==='identity'||key==='website')append(area,renderResearch(b,key));
-    const observations=b.observations||[];
-    if(!observations.length)append(area,el('p','callout warning','No original observations were supplied. Add your checked evidence to make a decision.'));
-    observations.forEach((o,index)=>{
-      const card=el('article','evidence-card');
-      append(card,el('p','eyebrow',o.source||`SOURCE ${index+1}`),el('h3','',o.name||b.name),el('p','evidence-location',[o.address,o.city,o.state].filter(Boolean).join(', ')||'Location not supplied'));
-      if(key==='identity')append(card,el('p','',`Phones: ${listValue(o.phones)||'Not supplied'}`));
-      if(key==='website')append(card,el('p','',`Website fields: ${listValue(o.websites)||'Not supplied — absence is unverified'}`));
-      if(key==='activity')append(card,el('p','',`Source activity signal: ${human(o.activity)}`));
-      if(key==='fit')append(card,el('p','',`Categories: ${listValue(o.categories)||'Not supplied'}`));
-      append(card,append(el('div','evidence-meta'),el('span','',`Observed: ${dateText(o.observed_at)}`),o.source_url?link(o.source_url,'Open source ↗'):el('span','','Source URL not supplied')),jsonDetails('Inspect original observation',o));
-      append(area,card);
-    });
-    if(b.websites?.length||b.socials?.length)append(area,append(el('article','evidence-card'),el('h3','','Available business links'),...([...b.websites||[],...b.socials||[]].map(url=>append(el('p'),link(url))))));
-    const trail=el('details','question-trail');
+    append(area,el('h4','source-heading','Latest imported observations by source'),el('p','small','Each source identity stays separate. Missing fields do not retract earlier evidence or establish absence or closure.'));
+    const groups=sourceGroups(b);
+    if(!groups.length)append(area,el('p','callout warning','No original observations were supplied. Add your checked evidence to make a decision.'));
+    for(const group of groups){
+      const section=el('section','source-group');
+      append(section,el('h4','',`${group.source||'Source not supplied'} · ${group.source_id||'Source identity not supplied'}`),el('p','small',`${group.observation_count??1} retained observations`),observationCard(group.latest,key,b,true));
+      if(group.history?.length)append(section,lazyDetails(`Earlier imports (${group.history.length})`,()=>group.history.map(o=>observationCard(o,key,b)),'source-history'));
+      append(area,section);
+    }
+    const signals=S.investigation.evidence?.retained_signals||[];
+    if(signals.length){const retained=append(el('section','retained-signals'),el('h4','','Retained signals affecting screening'));
+      for(const signal of signals)append(retained,append(el('article'),el('h5','',human(signal.kind)),el('p','',signal.value||'Value not supplied'),el('p','small',signal.explanation||''),el('p','small',[signal.source,signal.source_id,signal.batch_id!==undefined?`Import ${signal.batch_id}`:null,signal.observed_at?`Observed: ${dateText(signal.observed_at)}`:null].filter(Boolean).join(' · '))));
+      append(area,retained);
+    }
+    if(b.websites?.length||b.socials?.length)append(area,lazyDetails('Accumulated business links · includes retained history',()=>[...(b.websites||[]),...(b.socials||[])].map(url=>append(el('p'),link(url))),'accumulated-links'));
     const entries=(b.reviews||[]).filter(r=>r.investigation_question===key);
-    append(trail,el('summary','',`${questionLabels[key]} review trail · ${entries.length}`));
-    if(!entries.length)append(trail,el('p','small','No question-specific review saved. Earlier reviews remain in full history.'));
-    entries.slice().reverse().forEach(r=>append(trail,append(el('article','history-entry'),el('time','',`Saved: ${dateText(r.created_at)}`),el('p','',r.notes||''),el('p','small',`Evidence observed: ${dateText(r.evidence_observed_at)}`),r.evidence_url?link(r.evidence_url,'Checked evidence ↗'):null,jsonDetails('Saved question entry',r))));
-    append(area,trail);return area;
+    append(area,lazyDetails(`${questionLabels[key]} review trail · ${entries.length}`,()=>entries.length?entries.slice().reverse().map(r=>append(el('article','history-entry'),el('time','',`Recorded: ${dateText(r.created_at)}`),el('p','',r.notes||''),el('p','small',`Evidence observed: ${dateText(r.evidence_observed_at)}`),r.evidence_url?link(r.evidence_url,'Checked evidence ↗'):null,jsonDetails('Historical question entry',r))):el('p','small','No question-specific review saved. Earlier reviews remain in full history.'),'question-trail'));
+    append(area,button('Refresh saved evidence',()=>guard(async()=>{
+      const {step,mode}=S.investigation;
+      const latest=await deskSnapshot(b.id);
+      S.detail=latest.business;setupInvestigation(latest);
+      Object.assign(S.investigation,{step,mode});
+      render();focusDesk();
+    })));
+    return area;
   }
 
   function renderQuestion(b,key) {
@@ -516,7 +592,7 @@
     notes.addEventListener('input',()=>saveInput('notes',notes.value));
     append(form,field('Evidence notes',notes,'Explain the basis for this answer.'));
     const submit=el('button','primary',inv.mode==='guided'?'Keep answer & continue →':'Save this question');submit.type='submit';
-    append(form,append(el('div','decision-actions'),submit,button(inv.mode==='guided'?'Skip this question':'Discard this question’s edits',()=>changeDesk(i=>{delete i.edits[key];if(i.mode==='guided'){if(i.step===3)i.summary=true;else i.step++;}})),button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;render();}))));
+    append(form,append(el('div','decision-actions'),submit,button(inv.mode==='guided'?'Skip this question':'Discard this question’s edits',()=>changeDesk(i=>{delete i.edits[key];if(i.mode==='guided'){if(i.step===3)i.summary=true;else i.step++;}})),button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}))));
     if(inv.mode==='guided')append(form,button('Review session summary',()=>changeDesk(i=>{i.summary=true;}),'summary-link'));
     form.addEventListener('submit',e=>{
       e.preventDefault();
@@ -543,7 +619,7 @@
     });
     const finish=button('Finish & save review',e=>busy(e.currentTarget,()=>commitInvestigation(Object.keys(inv.edits)),'Saving review…'),'primary');
     finish.disabled=!inv.can_review || !Object.keys(inv.edits).length;
-    append(section,append(el('div','actions section-gap'),finish,button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;render();}))));
+    append(section,append(el('div','actions section-gap'),finish,button('Save draft & defer',()=>guard(()=>{S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();}))));
     return section;
   }
 
@@ -568,6 +644,8 @@
       // with the returned revisions before refreshes that can fail independently.
       const remaining=Object.fromEntries(Object.entries(inv.edits).filter(([key])=>!keys.includes(key)));
       Object.assign(inv,{review_revision:result.review_revision,draft_revision:result.draft_revision,draft:null,request:null,edits:remaining,questions:{...inv.questions,...questions},latest_session:{session_id:result.session_id,can_undo:true}});
+      inv.saved_answers={...inv.saved_answers};inv.question_history={...inv.question_history,...questions};inv.evidence=null;
+      for(const [key,answer] of Object.entries(questions))inv.saved_answers[key]={answers:Object.fromEntries(questionFields[key].map(([field])=>[field,answer[field]]).concat(key==='website'?[['verified_website',answer.verified_website||''],['candidate_website',answer.candidate_website||'']]:[])),basis_known:true,evidence_url:answer.evidence_url,notes:answer.notes,evidence_observed_at:answer.evidence_observed_at};
       inv.sequence++;
       S.dirty=true;
       await persistDraft();
@@ -603,7 +681,7 @@
         await openDetail(id);return;
       }
       notice('No further reviewable businesses in this filtered queue.');
-      S.detail=null;S.investigation=null;render();
+      S.detail=null;S.investigation=null;S.selectedChange=null;S.returnToChanges=false;render();
     }catch(error){fail(error);}
   }
 
@@ -657,7 +735,7 @@
       for(const item of items.slice(changesState.offset,changesState.offset+changesState.limit)){
         const reasons=displayedChangeReasons(item),body=el('div');append(body,el('p','small',[item.city,item.state].filter(Boolean).join(', ')),el('p','small',`${item.has_review?'Saved review present':'No saved review'} · ${item.has_draft?'Unfinished draft present':'No unfinished draft'}`));
         if(item.excluded_reasons?.length)append(body,el('p','callout warning',`Restrictions retained: ${item.excluded_reasons.map(human).join(' · ')}`));
-        for(const reason of reasons){const card=changeReason(reason);append(card,button(reason.seen?'Restore pending':'Mark seen',e=>busy(e.currentTarget,async()=>{await api('/api/changes/seen',{reason_ids:[reason.id],seen:!reason.seen});render();})));const questions=reason.questions?.length?reason.questions:[reason.question||'identity'];for(const question of [...new Set(questions)])if(questionOrder.includes(question)){const saved=item.saved_answers?.[question];if(saved)append(card,append(el('div','saved-change-answer'),el('h5','',`Saved ${questionLabels[question].toLowerCase()} answer`),definition(Object.entries(saved.answers||{}).map(([key,value])=>[human(key),human(value)])),el('p','small',saved.basis_known?`Evidence observed: ${dateText(saved.evidence_observed_at)}`:'Evidence date/basis unknown'),saved.evidence_url?link(saved.evidence_url,'Saved checked evidence ↗'):null,saved.notes?el('p','small',saved.notes):null));append(card,button(`${item.can_review?'Investigate':'Inspect'} ${questionLabels[question].toLowerCase()}`,()=>guard(async()=>{S.view='queue';S.returnToChanges=true;await openDetail(item.business_id,question);})));}
+        for(const reason of reasons){const card=changeReason(reason);append(card,button(reason.seen?'Restore pending':'Mark seen',e=>busy(e.currentTarget,async()=>{await api('/api/changes/seen',{reason_ids:[reason.id],seen:!reason.seen});render();})));const questions=reason.questions?.length?reason.questions:[reason.question||'identity'];for(const question of [...new Set(questions)])if(questionOrder.includes(question)){const saved=item.saved_answers?.[question];if(saved)append(card,append(el('div','saved-change-answer'),el('h5','',`Saved ${questionLabels[question].toLowerCase()} answer`),definition(Object.entries(saved.answers||{}).map(([key,value])=>[human(key),human(value)])),el('p','small',saved.basis_known?(knownObservationDate(saved.evidence_observed_at)?`Evidence observed: ${saved.evidence_observed_at}`:'Evidence observation date: unknown · association known'):'Evidence date/basis unknown'),saved.evidence_url?link(saved.evidence_url,'Saved checked evidence ↗'):null,saved.notes?el('p','small',saved.notes):null));append(card,button(`${item.can_review?'Investigate':'Inspect'} ${questionLabels[question].toLowerCase()}`,()=>guard(async()=>{S.view='queue';S.returnToChanges=true;await openDetail(item.business_id,question,reason.id);})));}
           append(body,card);}
         append(results,panel(item.name,body));
       }
@@ -670,7 +748,7 @@
     try{await persistDraft();const latest=await deskSnapshot(id);
       if(S.investigation!==inv||S.detail.id!==id)return;
       if(latest.review_revision!==inv.review_revision||latest.draft_revision!==inv.draft_revision){const error=new Error('Saved work changed too. Compare the latest saved work before keeping your answers.');error.status=409;throw error;}
-      S.detail=latest.business;accepting=true;inv.source_revision=latest.source_revision;inv.current_source_revision=latest.source_revision;inv.source_changed=false;inv.request=null;inv.error=null;inv.sequence++;await persistDraft();notice('Updated source evidence loaded. Your draft answers are retained; inspect the evidence before saving.');render();focusDesk();
+      S.detail=latest.business;refreshEvidenceModel(inv,latest);accepting=true;inv.source_revision=latest.source_revision;inv.current_source_revision=latest.source_revision;inv.source_changed=false;inv.request=null;inv.error=null;inv.sequence++;await persistDraft();notice('Updated source evidence loaded. Your draft answers are retained; inspect the evidence before saving.');render();focusDesk();
     }catch(error){if(accepting){inv.source_revision=previousRevision;inv.source_changed=true;}showDeskError(error);}
   }
   function renderImport() {const im=S.importing;append(content,heading('Import data','Bring a permitted source into your local workspace.'));const outer=el('div','narrow'),steps=el('div','steps');['Choose data','Preview & map','Rights & confirm'].forEach((x,i)=>append(steps,append(el('div',`step ${im.step===i+1?'active':''}`),el('b','',`0${i+1}`),el('span','',x))));append(content,outer);append(outer,steps);if(im.step===1)importChoose(outer);if(im.step===2)importPreview(outer);if(im.step===3)importRights(outer);}

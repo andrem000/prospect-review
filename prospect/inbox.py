@@ -57,8 +57,12 @@ def _age_reason(bid, question, basis, answers, today, days):
                 threshold_days=days, advisory=question != 'activity', basis_known=bool(basis))
 
 
-def list_items(db, config):
-    """Return current reasons without mutating reviews, drafts or run history."""
+def list_items(db, config, businesses=None):
+    """Return reasons, optionally for supplied businesses from the same snapshot.
+
+    Already evaluated businesses can be reused by the evidence desk; callers
+    must supply them from this database snapshot and configuration.
+    """
     today = date.fromisoformat(config['as_of']) if config.get('as_of') else datetime.now(timezone.utc).date()
     for key in ('freshness_days', 'advisory_review_days'):
         if type(config.get(key, 180)) is not int or config.get(key, 180) < 0:
@@ -68,7 +72,11 @@ def list_items(db, config):
         'SELECT reason_id,seen FROM inbox_acknowledgements')} if 'inbox_acknowledgements' in tables else {}
     events = {}
     if 'change_events' in tables:
-        for row in db.execute('SELECT * FROM change_events ORDER BY id DESC'):
+        query, params = 'SELECT * FROM change_events', []
+        if businesses is not None:
+            params = [b['id'] for b in businesses]
+            query += ' WHERE business_id IN (' + ','.join('?' for _ in params) + ')'
+        for row in db.execute(query + ' ORDER BY id DESC', params):
             data = json.loads(row['data'])
             questions = data.get('questions') or list(dict.fromkeys(
                 field['question'] for field in data.get('fields', []) if field.get('question')))
@@ -78,9 +86,9 @@ def list_items(db, config):
             events.setdefault(row['business_id'], []).append(reason)
     suppression = {(r['kind'], r['value']) for r in db.execute('SELECT kind,value FROM suppressions')}
     items = []
-    for business in core.all_businesses(db):
+    for business in core.all_businesses(db) if businesses is None else businesses:
         bid = business['id']
-        evaluated = core.evaluate(business, config, suppression, today)
+        evaluated = business if 'excluded_reasons' in business else core.evaluate(business, config, suppression, today)
         reasons = list(events.get(bid, []))
         reviewed, bases = _bases(db, business, tables)
         for question in FIELDS:

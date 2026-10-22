@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 — Unreleased
+
+- Show each question's effective saved answer and evidence basis separately from unfinished drafts and superseded guided answers.
+- Group observations by source identity, showing the latest import first with earlier observations available in history.
+- Carry the selected Changes reason into the Investigation desk, alongside retained historical signals that explain screening.
+
 ## 0.5.1 — Unreleased
 
 - Keep the Investigation desk's saved answers aligned with newer guided, advanced and CLI corrections, without reviving superseded evidence.

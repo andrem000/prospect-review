@@ -20,7 +20,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import core, investigation, research, __version__
+from . import core, evidence, investigation, research, __version__
 from . import inbox
 from .providers import ADAPTERS
 
@@ -406,7 +406,8 @@ class Application:
                 # Never combine old displayed details with a newer save token.
                 with closing(_memory(db)) as snapshot:
                     business = next(b for b in self.evaluated(snapshot) if b['id'] == bid)
-                    return {**investigation.read(snapshot, bid, business), 'business': business}
+                    return {**investigation.read(snapshot, bid, business), 'business': business,
+                            'evidence': evidence.read(snapshot, business, self.config())}
             business = next(b for b in self.evaluated(db) if b['id'] == bid)
             if method == 'POST':
                 if operation == 'draft':

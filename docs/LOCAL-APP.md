@@ -40,6 +40,12 @@ Save only the question you actually checked, with its evidence URL, notes and ob
 
 Saved question values follow the effective review, including later CLI or advanced corrections. Older guided answers remain in history. If a legacy correction's evidence cannot be associated with a particular answer, the editor leaves that evidence blank rather than reusing an older question's date or notes. Existing unfinished drafts are retained separately.
 
+Each question has an effective-answer summary showing its saved values and known or unknown evidence basis. Your draft is labeled separately and does not change that summary until you explicitly save a decision. Superseded guided answers remain available in history.
+
+Source cards are grouped by source name and source ID. The default card is the **latest imported** observation for that identity; expand earlier observations to inspect its history. Import order is separate from the observation date, so importing older evidence later does not make it fresh. A missing value means it was not supplied, and an omitted business does not imply closure or deletion.
+
+When you open a reason from Changes, the desk shows that reason's exact before/after context beside the affected question. Returning to Changes preserves its filters and page. If the selected reminder no longer applies after a save, the desk says so rather than treating it as the current reason. Mark seen remains a separate action. Historical-signal explanations identify retained websites/contact details and actual exclusion matches without clearing them.
+
 ## Guided review and drafts
 
 Guided review presents one question group at a time, with the same underlying evidence and decisions as the desk. Move between questions, skip questions you did not check, and inspect the summary before saving. Edit any proposed answer from the summary. Only newly checked or edited questions are committed; untouched previous decisions remain unchanged. Every supplied question is validated before the whole session is saved.

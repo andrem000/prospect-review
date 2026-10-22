@@ -3,6 +3,8 @@ import http.client
 import io
 import json
 import re
+import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import zipfile
@@ -48,6 +50,10 @@ def verify():
             # Exercise the new module from the wheel, not the source checkout.
             base = '/api/businesses/' + str(record['id'])
             investigation = request(base + '/investigation')
+            assert set(investigation['evidence']) == {'source_groups', 'change_reasons', 'retained_signals'}
+            assert investigation['evidence']['source_groups']
+            assert investigation['saved_answers']['website']['answers']['website_status'] == 'uncertain'
+            assert not investigation['saved_answers']['website']['basis_known']
             questions = {
                 'identity': {'identity_status': 'same_business',
                              'evidence_url': 'https://example.com/fictional-identity',
@@ -145,6 +151,44 @@ def verify():
             request('/api/changes/seen', {'reason_ids': [reason['id']], 'seen': True})
             item = next(item for item in request('/api/changes')['items'] if item['business_id'] == record['id'])
             assert next(r for r in item['reasons'] if r['id'] == reason['id'])['seen']
+            # A later omission retains the earlier website signal. Last imported
+            # is explicit even when the supplied observation date is older.
+            observation['websites'] = []
+            observation['observed_at'] = '2026-01-01'
+            omitted = request('/api/import/preview', {'filename': 'installed-omission.json',
+                'content': json.dumps([observation]), 'adapter': 'canonical'})
+            omitted_comparison = request('/api/import/compare', {
+                'preview_id': omitted['preview_id'], 'source': source_name})
+            request('/api/import/commit', {'preview_id': omitted['preview_id'],
+                'comparison_id': omitted_comparison['comparison_id'], 'rights': rights})
+
+            def persisted_review_state():
+                # Observe the actual installed workspace, including nonempty
+                # review/draft/triage records, without creating another app.
+                with closing(sqlite3.connect(server.app.dbpath)) as db:
+                    return {table: db.execute('SELECT * FROM ' + table + ' ORDER BY rowid').fetchall()
+                            for table in ('reviews', 'investigation_state',
+                                          'investigation_sessions', 'inbox_acknowledgements')}
+
+            before_read = persisted_review_state()
+            desk = request(base + '/investigation')
+            assert request(base + '/investigation') == desk
+            current_item = next(item for item in request('/api/changes')['items']
+                                if item['business_id'] == record['id'])
+            assert desk['saved_answers'] == current_item['saved_answers']
+            assert desk['evidence']['change_reasons'] == current_item['reasons']
+            group = next(group for group in desk['evidence']['source_groups']
+                         if group['source'] == source_name and group['source_id'] == observation['source_id'])
+            assert group['latest']['websites'] == []
+            assert group['latest']['observed_at'] == '2026-01-01'
+            assert group['observation_count'] == len(group['history']) + 1
+            assert group['history'][0]['websites'] == ['https://installed-change.example']
+            assert any(signal['kind'] == 'website' and signal['value'] == 'https://installed-change.example'
+                       for signal in desk['evidence']['retained_signals'])
+            assert desk['draft'] is not None and desk['source_changed']
+            assert desk['business']['review'] == prior['review']
+            assert 'website_present' in desk['business']['excluded_reasons']
+            assert persisted_review_state() == before_read
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -154,7 +198,10 @@ def verify():
                     'installed_research_separate_from_reviews_exports': True,
                     'installed_research_dismissal_restart': True,
                     'installed_change_comparison_and_triage': True,
-                    'installed_reimport_preserves_review_and_draft': True}
+                    'installed_reimport_preserves_review_and_draft': True,
+                    'installed_evidence_desk_read_model': True,
+                    'installed_evidence_get_preserves_reviews_drafts_triage': True,
+                    'installed_latest_import_and_retained_signal_explanation': True}
         finally:
             server.shutdown()
             server.server_close()
