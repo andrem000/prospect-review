@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — Unreleased
+## 0.4.0 — 2026-10-22
 
 - Add explicit research assistance for a supplied public website link, with a saved-page text/HTML option that works offline.
 - Show captured source evidence, dates, matching and conflicting identity clues, and cautious website/identity proposals for human review.
