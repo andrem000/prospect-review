@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-10-22
 
 - Add a bundled local browser app launched with `prospect-review app`, with no third-party runtime dependencies or external assets.
 - Preview and map listing files before an explicit import, preserving source permissions, notices and transformation provenance.
