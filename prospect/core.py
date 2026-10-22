@@ -141,7 +141,7 @@ def all_businesses(db):
                 b[k] = d[k]
     for r in db.execute('SELECT * FROM reviews ORDER BY id'):
         if r['business_id'] in grouped:
-            grouped[r['business_id']].setdefault('reviews', []).append({'created_at': r['created_at'], **json.loads(r['data'])})
+            grouped[r['business_id']].setdefault('reviews', []).append({**json.loads(r['data']), 'created_at': r['created_at']})
     for b in grouped.values():
         b['review'] = (b.get('reviews') or [{}])[-1]
     return list(grouped.values())
@@ -270,23 +270,66 @@ def suppress(db, path):
     return {'suppression_keys_loaded': count, 'unsafe_link_values_ignored': ignored_links}
 
 
-def review(db, bid, data):
+REVIEW_DEFAULTS = dict(website_status='unreviewed', verified_website='', candidate_website='',
+                       activity='unknown', ownership='unknown', residential='unknown',
+                       service_fit='unknown', delivery='unknown', disposition='pending',
+                       queue_hold=False, evidence_observed_at=None)
+ACTIVITY_EVIDENCE_FIELDS = ('activity_evidence_observed_at', 'activity_evidence_url', 'activity_evidence_notes')
+
+
+def review(db, bid, data, replace=False):
+    """Append an effective decision, preserving omitted fields without re-dating evidence."""
     if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
         raise ValueError('Unknown business ID')
-    if not public_url(data['evidence_url']) or not data['notes'].strip():
+    supplied = dict(data)
+    supplied.pop('created_at', None)  # Recording metadata belongs to this insertion.
+    if 'evidence_observed_at' in supplied and supplied['evidence_observed_at'] is not None:
+        value = supplied['evidence_observed_at']
+        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+            raise ValueError('evidence_observed_at must be YYYY-MM-DD')
+        observed = date.fromisoformat(value)
+        if observed > datetime.now(timezone.utc).date():
+            raise ValueError('evidence_observed_at cannot be in the future')
+    previous_row = db.execute('SELECT data FROM reviews WHERE business_id=? ORDER BY id DESC LIMIT 1', (bid,)).fetchone()
+    previous = json.loads(previous_row['data']) if previous_row else {}
+    effective = dict(REVIEW_DEFAULTS)
+    if not replace:
+        # Carry decisions, not insertion metadata or snapshot-origin claims.
+        effective.update({k: previous[k] for k in REVIEW_DEFAULTS if k in previous})
+    effective.update(supplied)
+    if not public_url(effective.get('evidence_url')) or not str(effective.get('notes') or '').strip():
         raise ValueError('Review requires an HTTP(S) evidence URL and nonempty notes')
-    if data['website_status'] == 'site_found' and not public_url(data.get('verified_website')):
+    if effective['website_status'] not in WEBSITE_STATUSES:
+        raise ValueError('Invalid website_status')
+    choices = {'activity': ('unknown', 'active', 'closed'), 'ownership': ('unknown', 'independent', 'chain'),
+               'residential': ('unknown', 'yes', 'no'), 'service_fit': ('unknown', 'yes', 'no'),
+               'delivery': ('unknown', 'mobile', 'fixed'), 'disposition': ('pending', 'rejected', 'contacted')}
+    for field, allowed in choices.items():
+        if effective[field] not in allowed:
+            raise ValueError('Invalid ' + field)
+    if effective['website_status'] == 'site_found' and not public_url(effective.get('verified_website')):
         raise ValueError('site_found requires --verified-website with an HTTP(S) URL')
-    if data['website_status'] == 'site_found' and not confirmable_site(data['verified_website']):
+    if effective['website_status'] == 'site_found' and not confirmable_site(effective['verified_website']):
         raise ValueError('site_found requires a dedicated-domain or tenant-hosted business site with evidence and notes; social/directory/contact/shortener links cannot be confirmed as sites')
-    if data.get('candidate_website') and not public_url(data['candidate_website']):
+    if effective.get('candidate_website') and not public_url(effective['candidate_website']):
         raise ValueError('candidate_website requires an HTTP(S) URL')
+    # Only an explicit activity assertion binds the current review evidence to
+    # activity. A website/date-only correction retains the original activity basis.
+    if 'activity' in supplied or replace:
+        activity_basis = effective
+        values = (activity_basis.get('evidence_observed_at'), activity_basis.get('evidence_url'), activity_basis.get('notes'))
+    else:
+        values = tuple(previous.get(k, previous.get(fallback)) for k, fallback in zip(
+            ACTIVITY_EVIDENCE_FIELDS, ('evidence_observed_at', 'evidence_url', 'notes')))
+    effective.update(zip(ACTIVITY_EVIDENCE_FIELDS, values))
+    recorded_at = now()
     with db:
-        db.execute('INSERT INTO reviews(business_id,created_at,data) VALUES(?,?,?)', (bid, now(), json.dumps(data)))
-        if data.get('disposition') == 'contacted':
+        db.execute('INSERT INTO reviews(business_id,created_at,data) VALUES(?,?,?)', (bid, recorded_at, json.dumps(effective)))
+        if effective.get('disposition') == 'contacted':
             b = next(b for b in all_businesses(db) if b['id'] == bid)
             for kind, value in suppression_keys(b):
                 db.execute('INSERT OR REPLACE INTO suppressions VALUES(?,?,?)', (kind, value, 'manually_marked_contacted'))
+    return {**effective, 'created_at': recorded_at}
 
 
 def evaluate(b, config, suppression, today):
@@ -294,7 +337,7 @@ def evaluate(b, config, suppression, today):
     website = website_assessment(b)
     trade = trade_assessment(b, config)
     identity = identity_assessment(b, phone)
-    activity = activity_assessment(b, today)
+    activity = activity_assessment(b, today, config.get('freshness_days', 180))
     scope = scope_assessment(b, config)
     site = website['classification'] in ('standalone_website', 'provider_hosted_website')
     reasons = []
@@ -383,7 +426,7 @@ def search(db, config, include_excluded=False, qualified_only=False):
             raise ValueError('Region cities must be a list')
     if not isinstance(config.get('chain_names', []), list):
         raise ValueError('chain_names must be a list')
-    if not isinstance(config.get('freshness_days', 180), int) or config.get('freshness_days', 180) < 0:
+    if type(config.get('freshness_days', 180)) is not int or config.get('freshness_days', 180) < 0:
         raise ValueError('freshness_days must be a nonnegative integer')
     suppression = {(r['kind'], r['value']) for r in db.execute('SELECT * FROM suppressions')}
     as_of = date.fromisoformat(config['as_of']) if config.get('as_of') else datetime.now(timezone.utc).date()

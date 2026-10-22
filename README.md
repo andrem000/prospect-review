@@ -61,10 +61,35 @@ python -m prospect --db local-data/review.sqlite3 export --config config.example
 
 Place global `--db` before the command. Load any existing exclusion file with `suppress` before using the queue. **Export refuses an existing output file or provenance sidecar**; choose new paths for each export. The [input and command reference](docs/REFERENCE.md) covers fields, suppression, manual review, profiles and reconciliation.
 
+## Record and correct a review
+
+Try this complete workflow with the **fictional** fixtures from the checkout. Use a new `review-example/` directory. The dates and evidence below are invented for the example; for your own data, supply the date you actually observed the evidence.
+
+```sh
+mkdir review-example
+python -m prospect --db review-example/review.sqlite3 import fixtures/businesses.csv --rights fixtures/rights.synthetic.json
+python -m prospect --db review-example/review.sqlite3 suppress fixtures/suppression.csv
+python -m prospect --db review-example/review.sqlite3 review 1 --website-status no_site_found --activity active --ownership independent --residential yes --evidence-observed-at 2026-10-15 --evidence-url https://example.com/fictional-check --notes "SIMULATED: fictional website, activity and scope check; no real business reviewed."
+python -m prospect --db review-example/review.sqlite3 show 1
+```
+
+ID `1` is Cedar Example Plumbing in this fresh fixture database. For your own data, inspect `search` and `show` to select the correct ID. The review response includes the saved effective fields. Qualification depends on the configured date and freshness window; this fixed-date example is not a permanently current review.
+
+Now record a later, still fictional website correction:
+
+```sh
+python -m prospect --db review-example/review.sqlite3 review 1 --website-status uncertain --candidate-website https://possible.example.com --evidence-observed-at 2026-10-16 --evidence-url https://example.com/fictional-correction --notes "SIMULATED: possible website needs checking; no new activity check."
+python -m prospect --db review-example/review.sqlite3 show 1
+python -m prospect --db review-example/review.sqlite3 export --config config.example.json --out review-example/queue.json
+```
+
+The correction preserves independent ownership and residential fit. The review history contains both entries. The latest evidence date is 16 October, but the carried activity check remains dated 15 October. To record a new activity check, explicitly supply `--activity` with its evidence date, URL and notes. To clear a decision, explicitly supply `unknown` or `pending` as appropriate; `--replace` starts the decision from defaults. History, prior confirmed-site evidence and durable contact exclusions remain preserved. See [manual review semantics](docs/REFERENCE.md#manual-review) before updating real records.
+
 ## Interpret the results
 
 - A missing website field is a listing signal, never proof that no website exists. Scores rank review priority, not purchase likelihood.
 - `qualified` reflects recorded evidence and configured rules. It does not grant contact permission or verify present-day facts.
+- `freshness_days` limits the age of manual activity evidence. Entering or correcting a review does not refresh an old activity observation; undated legacy activity evidence remains unverified.
 - Reimport preserves business identities but appends batches and observations. It is not a byte-identical database operation.
 - Rules cover finite host/category patterns; uncertain cases need human review. Provider-hosted sites require evidence-backed confirmation.
 - The working dataset is loaded into memory. National-scale performance, classification precision and commercial outcomes are not established.

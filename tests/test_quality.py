@@ -102,6 +102,8 @@ class QualityTests(unittest.TestCase):
         b = self.evaluate(review=r)
         self.assertFalse(b['qualified'])
         r['created_at'] = '2026-10-15T00:00:00Z'
+        self.assertFalse(self.evaluate(review=r)['qualified'])
+        r['evidence_observed_at'] = '2026-10-15'
         self.assertTrue(self.evaluate(review=r)['qualified'])
 
     def test_four_dimensions_are_bounded_and_sum_to_priority(self):

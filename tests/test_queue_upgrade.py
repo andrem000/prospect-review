@@ -1,6 +1,6 @@
 """Queue/scope contracts and hash-pinned reconciliation, using invented records."""
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -35,7 +35,8 @@ class UpgradeTests(unittest.TestCase):
     def review(self, bid=1, **values):
         core.review(self.db, bid, {'website_status': 'no_site_found', 'activity': 'unknown', 'ownership': 'unknown',
                                   'residential': 'unknown', 'disposition': 'pending', 'evidence_url': 'https://example.org/evidence',
-                                  'notes': 'Invented evidence for testing only.', **values})
+                                  'notes': 'Invented evidence for testing only.',
+                                  **({'evidence_observed_at': datetime.now(timezone.utc).date().isoformat()} if values.get('activity') == 'active' else {}), **values})
 
     def manifest(self, cases=None, controls=None, decided='2026-10-18T12:00:00Z'):
         bank = self.path / 'bank.json'

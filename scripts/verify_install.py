@@ -66,10 +66,49 @@ def main():
         module_demo = json.loads(run(python, '-I', '-m', 'prospect', 'demo', '--out', 'module-demo'))
         alias_demo = json.loads(run(alias, 'demo', '--out', 'alias-demo'))
         assert module_demo == summary == alias_demo
+
+        # Exercise the documented review/correction workflow through the installed
+        # command, with bundled fictional inputs and an intentional historical clock.
+        extract = "from importlib import resources; from pathlib import Path; d=resources.files('prospect').joinpath('data'); p=Path('fixtures'); p.mkdir(); [(p/n).write_bytes(d.joinpath(n).read_bytes()) for n in ('businesses.csv','rights.synthetic.json','suppression.csv','config.example.json')]"
+        run(python, '-I', '-c', extract)
+        example = outside / 'review-example'
+        example.mkdir()
+        database = example / 'review.sqlite3'
+        run(cli, '--db', database, 'import', 'fixtures/businesses.csv', '--rights', 'fixtures/rights.synthetic.json')
+        run(cli, '--db', database, 'suppress', 'fixtures/suppression.csv')
+        initial = json.loads(run(cli, '--db', database, 'show', '1'))
+        assert initial['name'] == 'Cedar Example Plumbing'
+        run(cli, '--db', database, 'review', '1', '--website-status', 'no_site_found',
+            '--activity', 'active', '--ownership', 'independent', '--residential', 'yes',
+            '--evidence-observed-at', '2026-10-15', '--evidence-url', 'https://example.com/fictional-check',
+            '--notes', 'SIMULATED: fictional website, activity and scope check; no real business reviewed.')
+        config = json.loads((outside / 'fixtures/config.example.json').read_text(encoding='utf-8'))
+        config['as_of'] = '2026-10-22'
+        for days, expected_qualified in ((180, True), (1, False)):
+            config['freshness_days'] = days
+            config_path = example / ('freshness-' + str(days) + '.json')
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            result = json.loads(run(cli, '--db', database, 'search', '--config', config_path))
+            cedar = next(row for row in result['candidates'] if row['id'] == 1)
+            assert cedar['qualified'] is expected_qualified
+        run(cli, '--db', database, 'review', '1', '--website-status', 'uncertain',
+            '--candidate-website', 'https://possible.example.com', '--evidence-observed-at', '2026-10-16',
+            '--evidence-url', 'https://example.com/fictional-correction',
+            '--notes', 'SIMULATED: possible website needs checking; no new activity check.')
+        corrected = json.loads(run(cli, '--db', database, 'show', '1'))
+        saved = corrected['review']
+        assert len(corrected['reviews']) == 2
+        assert saved['ownership'] == 'independent' and saved['residential'] == 'yes'
+        assert saved['activity'] == 'active' and saved['evidence_observed_at'] == '2026-10-16'
+        assert saved['activity_evidence_observed_at'] == '2026-10-15'
+        run(cli, '--db', database, 'export', '--config', example / 'freshness-180.json', '--out', example / 'queue.json')
+        assert (example / 'queue.json.provenance.json').exists()
         print(json.dumps({'wheel': wheel.name, 'version': version, 'python': location['python'],
                           'import_in_isolated_venv': True, 'outside_checkout': True,
                           'installed_cli': True, 'module_cli': True, 'compatibility_alias': True,
                           'demo_checks': summary['checks_passed'], 'existing_demo_preserved': True,
+                          'documented_review_example': True, 'configured_freshness_changes_qualification': True,
+                          'partial_correction_preserves_decisions_and_activity_date': True,
                           'runtime_dependencies': 0}, indent=2))
 
 

@@ -222,14 +222,22 @@ def identity_assessment(b, normalize_phone):
             'upstream_identity_source_labels': sorted(providers), 'phone_reachability_verified': False}
 
 
-def activity_assessment(b, today):
+def activity_assessment(b, today, freshness_days=180):
     r = b.get('review', {})
-    if r.get('activity') == 'active' and r.get('evidence_url') and r.get('notes'):
+    observed_at = r.get('activity_evidence_observed_at', r.get('evidence_observed_at'))
+    evidence_url = r.get('activity_evidence_url', r.get('evidence_url'))
+    notes = r.get('activity_evidence_notes', r.get('notes'))
+    age = None
+    if r.get('activity') == 'active' and evidence_url and notes:
         try:
-            age = (today - date.fromisoformat(r.get('created_at', '')[:10])).days
-        except ValueError:
-            age = None
-        if age is not None and 0 <= age <= 180:
+            # Legacy invalid, missing, timestamp-shaped or future dates remain
+            # unverified; created_at is recording time and never evidence.
+            if not isinstance(observed_at, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', observed_at):
+                raise ValueError('undated or malformed observation')
+            age = (today - date.fromisoformat(observed_at)).days
+        except (ValueError, TypeError):
+            pass
+        if age is not None and 0 <= age <= freshness_days:
             points, basis = 10, 'manual_active_with_evidence'
         else:
             points, basis = 4, 'manual_active_stale_or_undated'
@@ -240,4 +248,6 @@ def activity_assessment(b, today):
     else:
         points, basis = 0, 'no_positive_activity_evidence'
     return {'points': points, 'maximum': 10, 'basis': basis,
+            'evidence_observed_at': observed_at, 'evidence_url': evidence_url,
+            'evidence_notes': notes, 'evidence_age_days': age, 'freshness_days': freshness_days,
             'record_update_points': 0, 'current_operation_verified': basis == 'manual_active_with_evidence'}

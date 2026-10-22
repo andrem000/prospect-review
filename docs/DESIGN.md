@@ -20,6 +20,8 @@ Each import creates a batch with a source hash and rights snapshot. Reimports re
 
 Reviews append history. Machine screening, saved human review, evidence date and queue status remain separate fields. A current record can include older observations; repeated import is not a claim that old evidence was freshly checked. Search records metrics in the database, so it is not a read-only database operation.
 
+Manual updates preserve omitted decision fields; an explicit `--replace` starts from defaults without erasing history. Each review has its actual recording time and a supplied observation date. Carried activity retains a separate evidence snapshot so a website-only correction cannot refresh it. Current-operation assessment uses that activity observation date and the configured `freshness_days` window. Legacy reviews without dated activity evidence remain unverified; their recording timestamp is not a substitute.
+
 ## Screening
 
 The score sums website-gap, identity/contact, trade and activity components. It prioritizes inspection rather than estimating conversion probability. Listed dedicated websites are excluded from the website-gap queue. Social profiles, directories, shorteners and possible hosted websites have distinct treatment. An evidence-backed human finding is needed to confirm a provider-hosted site or mark a reviewed website search as `no_site_found`.

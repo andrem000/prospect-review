@@ -30,17 +30,19 @@ def main(argv=None):
     apply.add_argument('--plan', required=True)
     apply.add_argument('--approve-plan', required=True)
     apply.add_argument('--out-db', required=True)
-    rev = sub.add_parser('review')
+    rev = sub.add_parser('review', argument_default=argparse.SUPPRESS)
     rev.add_argument('id', type=int)
-    rev.add_argument('--website-status', choices=core.WEBSITE_STATUSES, required=True)
-    rev.add_argument('--verified-website', default='')
-    rev.add_argument('--candidate-website', default='', help='Unresolved possible website; retained as uncertain, never confirmed automatically')
-    rev.add_argument('--activity', choices=('unknown', 'active', 'closed'), default='unknown')
-    rev.add_argument('--ownership', choices=('unknown', 'independent', 'chain'), default='unknown')
-    rev.add_argument('--residential', choices=('unknown', 'yes', 'no'), default='unknown')
-    rev.add_argument('--service-fit', choices=('unknown', 'yes', 'no'), default='unknown', help='Fit for non-residential service profiles; requires manual evidence')
-    rev.add_argument('--delivery', choices=('unknown', 'mobile', 'fixed'), default='unknown')
-    rev.add_argument('--disposition', choices=('pending', 'rejected', 'contacted'), default='pending')
+    rev.add_argument('--website-status', choices=core.WEBSITE_STATUSES)
+    rev.add_argument('--verified-website')
+    rev.add_argument('--candidate-website', help='Unresolved possible website; retained as uncertain, never confirmed automatically')
+    rev.add_argument('--activity', choices=('unknown', 'active', 'closed'))
+    rev.add_argument('--ownership', choices=('unknown', 'independent', 'chain'))
+    rev.add_argument('--residential', choices=('unknown', 'yes', 'no'))
+    rev.add_argument('--service-fit', choices=('unknown', 'yes', 'no'), help='Fit for non-residential service profiles; requires manual evidence')
+    rev.add_argument('--delivery', choices=('unknown', 'mobile', 'fixed'))
+    rev.add_argument('--disposition', choices=('pending', 'rejected', 'contacted'))
+    rev.add_argument('--replace', action='store_true', help='Reset omitted decisions to defaults; history and suppression remain')
+    rev.add_argument('--evidence-observed-at', help='Evidence observation date, YYYY-MM-DD; no implicit current date')
     rev.add_argument('--evidence-url', required=True)
     rev.add_argument('--notes', required=True)
     for command in ('search', 'export'):
@@ -78,7 +80,7 @@ def main(argv=None):
                 result = reconcile.apply_copy(a.db, reconcile.read(a.plan), a.out_db, a.approve_plan)
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
-        with core.connect(a.db) as db:
+        with closing(core.connect(a.db)) as db, db:
             if a.command == 'init':
                 result = {'database': a.db, 'ready': True}
             elif a.command == 'import':
@@ -86,9 +88,9 @@ def main(argv=None):
             elif a.command == 'suppress':
                 result = core.suppress(db, a.file)
             elif a.command == 'review':
-                data = {k: v for k, v in vars(a).items() if k not in ('command', 'db', 'id')}
-                core.review(db, a.id, data)
-                result = {'reviewed': a.id}
+                data = {k: v for k, v in vars(a).items() if k not in ('command', 'db', 'id', 'replace')}
+                saved = core.review(db, a.id, data, replace=getattr(a, 'replace', False))
+                result = {'reviewed': a.id, 'review': saved}
             elif a.command in ('search', 'export'):
                 config = json.loads(Path(a.config).read_text(encoding='utf-8-sig'))
                 rows, metrics = core.search(db, config, a.include_excluded, a.qualified_only)

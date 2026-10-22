@@ -189,7 +189,8 @@ class CorrectionTests(unittest.TestCase):
                                  '--evidence-url', 'https://example.org/synthetic-evidence', '--notes', 'Synthetic matching hosted site'],
                                 cwd=ROOT, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {'reviewed': 1})
+        self.assertEqual(json.loads(result.stdout)['reviewed'], 1)
+        self.assertEqual(json.loads(result.stdout)['review']['website_status'], 'site_found')
         self.assertEqual(self.results()[0]['website_signal'], 'provider_hosted_website')
 
     def test_legacy_dedicated_tenant_domain_is_still_suppressed(self):

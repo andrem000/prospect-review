@@ -1,4 +1,5 @@
 import csv
+from datetime import datetime, timezone
 import json
 import tempfile
 import unittest
@@ -54,7 +55,7 @@ class PipelineTests(unittest.TestCase):
         return dict(website_status='no_site_found', activity='active', ownership='independent',
                     residential='yes', disposition='pending', evidence_url='https://example.com/evidence',
                     notes='Synthetic human check of identity, activity, ownership, service and website search.',
-                    verified_website='', **kwargs)
+                    verified_website='', evidence_observed_at=datetime.now(timezone.utc).date().isoformat(), **kwargs)
 
     def test_qualification_requires_manual_signals(self):
         self.load()
@@ -222,6 +223,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(result['candidates']), 2)
         run('review', '1', '--website-status', 'no_site_found', '--activity', 'active',
             '--ownership', 'independent', '--residential', 'yes',
+            '--evidence-observed-at', datetime.now(timezone.utc).date().isoformat(),
             '--evidence-url', 'https://example.com/check', '--notes', 'Synthetic test review')
         result = run('export', '--config', str(ROOT / 'config.example.json'), '--qualified-only',
                      '--out', str(self.root / 'qualified.json'))

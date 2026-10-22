@@ -59,15 +59,21 @@ Create the database's parent directory first. Ordinary CLI commands can create t
 
 ### Manual review
 
-`review` requires `--website-status`, `--evidence-url` and nonempty `--notes`. Website status is `unreviewed`, `no_site_found`, `site_found` or `uncertain`. `site_found` also requires `--verified-website`; social, directory and shortener URLs cannot be confirmed as a business website. Use `--candidate-website` for an unresolved possibility.
+`review` requires an HTTP(S) `--evidence-url` and nonempty `--notes` on every call. Decision flags omitted on an update retain their previous effective values. Initial reviews and `--replace` start with website status `unreviewed`, other decision fields `unknown`, disposition `pending`, and empty URLs/dates. The command appends history and returns the effective saved review so you can inspect the result.
 
-Additional flags record activity, independent/chain ownership, residential/service fit, mobile/fixed delivery and disposition. Defaults are unknown/pending. `--disposition contacted` adds persistent suppression keys. These are operator assertions; the program does not visit the evidence URL or verify the decision. Consult `review --help` before recording a decision.
+Website status is `unreviewed`, `no_site_found`, `site_found` or `uncertain`. `site_found` requires an effective `--verified-website`; social, directory and shortener URLs cannot be confirmed as a business website. Use `--candidate-website` for an unresolved possibility. Other flags record activity, independent/chain ownership, residential/service fit, mobile/fixed delivery and disposition. Explicit `unknown`, `unreviewed` or `pending` values reset the respective field; an explicit empty URL clears that field. `--replace` resets omitted fields instead of preserving them.
+
+Supply `--evidence-observed-at YYYY-MM-DD` for the date the evidence was actually observed. Newly supplied dates must be valid calendar dates and not later than the current UTC date. Recording time is stored separately. Omitted dates are preserved on updates, or remain unknown on a new/replacement review. Existing undated, malformed or future-dated activity evidence does not establish current operation. Do not substitute today's date merely because you are entering an old finding.
+
+Activity retains its own evidence date, URL and notes. A website correction—even one with a newer observation date—does not refresh carried activity. Explicit `--activity active` records an activity assertion using the effective observation date and the supplied evidence URL/notes. For a newly observed activity check, supply its date explicitly. A missing date keeps the activity unverified. `freshness_days` is the maximum age in calendar days for this activity evidence, inclusive of the boundary; `0` permits only evidence observed on the scoring date. Old or future evidence relative to `as_of` cannot qualify a business as currently operating.
+
+`--disposition contacted` adds persistent suppression keys. Later updates or `--replace` do not remove those keys, prior confirmed-site evidence or history. These are operator assertions; the program does not visit the evidence URL or verify a decision. The [README example](../README.md#record-and-correct-a-review) demonstrates a dated review and a partial correction using only fictional inputs. Consult `review --help` before recording a decision.
 
 ### Configuration
 
 Start with [`config.example.json`](../config.example.json). `trades` is a required, nonempty mapping from trade names to category-alias lists. `regions` restricts state/city matches; an empty list permits supported US geography. Change the example regions to match the intended dataset.
 
-Optional settings include `chain_names`, `freshness_days`, `as_of`, `service_scope` (`residential` or `service`), `delivery_scope` (`any`, `mobile`, `fixed`), `broad_categories` and `excluded_categories`. Use `as_of` only for an intentional dated analysis; it does not refresh evidence. [`profiles/`](../profiles/) contains provisional alternative service examples.
+Optional settings include `chain_names`, `freshness_days` (nonnegative integer, default 180, for manual activity evidence), `as_of`, `service_scope` (`residential` or `service`), `delivery_scope` (`any`, `mobile`, `fixed`), `broad_categories` and `excluded_categories`. `freshness_days` does not certify website absence, ownership or scope freshness; those remain operator assertions. Use `as_of` only for an intentional dated analysis; it does not refresh evidence. [`profiles/`](../profiles/) contains provisional alternative service examples.
 
 ### Suppression and reconciliation
 
