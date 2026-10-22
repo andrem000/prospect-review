@@ -19,7 +19,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import core, investigation, __version__
+from . import core, investigation, research, __version__
 from .providers import ADAPTERS
 
 MAX_BODY = 8 * 1024 * 1024
@@ -101,6 +101,7 @@ class Application:
         for name in ('imports', 'exports'):
             (self.root / name).mkdir(exist_ok=True)
         self.lock = threading.RLock()
+        self.research_lock = threading.Lock()
         self.token = secrets.token_urlsafe(32)
         self.previews = {}
         self.default = json.loads(resources.files('prospect').joinpath('data/config.example.json').read_text(encoding='utf-8'))
@@ -108,6 +109,7 @@ class Application:
         self.default.pop('as_of', None)
         with closing(core.connect(self.dbpath)) as db:
             investigation.initialize(db)
+            research.initialize(db)
             db.execute('CREATE TABLE IF NOT EXISTS app_exports(id TEXT PRIMARY KEY, data TEXT NOT NULL)')
             db.commit()
             if not self.configpath.exists():
@@ -236,6 +238,61 @@ class Application:
             shutil.rmtree(folder)
             raise
 
+    def research_business(self, db, bid):
+        if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
+            raise LookupError('Business not found')
+        return next(b for b in self.evaluated(db) if b['id'] == bid)
+
+    def capture_research(self, bid, data):
+        # Validation/persistence run under the ordinary mutation lock. Transport
+        # never does; independent draft/review requests remain responsive.
+        payload = research.validate_request(data)
+        with self.lock, closing(core.connect(self.dbpath)) as db:
+            before = self.research_business(db, bid)
+            if 'suppressed_or_contacted' in before['excluded_reasons']:
+                raise ValueError('Contact-excluded businesses cannot start new research')
+            prior = research.existing(db, bid, payload, data['request_id'], before)
+            if prior:
+                return prior
+            identity = research.fingerprint(before)
+        # Bound network and analysis workers. Offline paste also uses this slot,
+        # so concurrent retries cannot create duplicate captures.
+        if not self.research_lock.acquire(blocking=False):
+            raise investigation.Conflict('A research check is already running; retry after it completes')
+        try:
+            # Recheck after acquiring the slot in case another capture completed.
+            with self.lock, closing(core.connect(self.dbpath)) as db:
+                current = self.research_business(db, bid)
+                if 'suppressed_or_contacted' in current['excluded_reasons']:
+                    raise investigation.Conflict('Business became contact-excluded; research cancelled')
+                if research.fingerprint(current) != identity:
+                    raise investigation.Conflict('Business identity changed; research cancelled')
+                prior = research.existing(db, bid, payload, data['request_id'], current)
+                if prior:
+                    return prior
+            if data['mode'] == 'fetch':
+                final_url, content, media = research.network.fetch_page(data['url'])
+                observed = datetime.now(timezone.utc).date().isoformat()
+            else:
+                final_url, content, media = data['url'], data['content'].encode('utf-8'), 'text/html'
+                observed = data['observed_at']
+            record = research.analyze(before, content, data['url'], final_url, data['mode'], observed, media)
+            with self.lock, closing(core.connect(self.dbpath)) as db:
+                after = self.research_business(db, bid)
+                if 'suppressed_or_contacted' in after['excluded_reasons']:
+                    raise investigation.Conflict('Business became contact-excluded; captured result discarded')
+                if research.fingerprint(after) != identity:
+                    raise investigation.Conflict('Business identity changed; captured result discarded')
+                prior = research.existing(db, bid, payload, data['request_id'], after)
+                if prior:
+                    return prior
+                with db:
+                    db.execute('INSERT INTO research_records VALUES(?,?,?,?,?,?)',
+                        (record['id'], bid, data['request_id'], payload, identity, investigation.encoded(record)))
+            return {'record': record}
+        finally:
+            self.research_lock.release()
+
     def dispatch(self, method, path, query, data, db):
         if method == 'GET' and path == '/api/state':
             rows = self.evaluated(db)
@@ -271,6 +328,15 @@ class Application:
                 return {'metrics': core.suppress(db, temporary)}
             finally:
                 temporary.unlink(missing_ok=True)
+        research_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/research(?:/([a-f0-9]{32})/dismiss)?', path)
+        if research_route:
+            bid, rid = int(research_route[1]), research_route[2]
+            business = self.research_business(db, bid)
+            if method == 'GET' and rid is None:
+                return research.list_records(db, bid, business)
+            if method == 'POST' and rid:
+                return research.dismiss(db, bid, rid, data, business)
+            raise LookupError('Route not found')
         investigation_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/(investigation(?:/undo)?|draft)', path)
         if investigation_route:
             bid, operation = int(investigation_route[1]), investigation_route[2]
@@ -424,6 +490,9 @@ class Handler(BaseHTTPRequestHandler):
                     data = json.loads(raw.decode('utf-8'), parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON value')))
                     if not isinstance(data, dict):
                         raise ValueError('Request JSON must be an object')
+                capture = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/research', path)
+                if method == 'POST' and capture:
+                    return self.reply(200, _json(app.capture_research(int(capture[1]), data)))
                 with app.lock, closing(core.connect(app.dbpath)) as db:
                     download = re.fullmatch(r'/api/exports/([a-f0-9]{32})/download', path)
                     if method == 'GET' and download:

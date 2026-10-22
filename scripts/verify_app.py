@@ -84,10 +84,31 @@ def verify():
                 'review_revision': correction['review_revision']})
             assert request(base)['review']['activity_evidence_observed_at'] == '2026-10-15'
             assert request(base + '/investigation')['draft'] is not None
+            # Saved-page assistance must work fully offline in the installed wheel.
+            before_research = request(base + '/investigation')
+            business = request(base)
+            page = ('<html><title>' + business['name'] + '</title><body><h1>' +
+                    business['name'] + '</h1><p>' + business['address'] + ', ' +
+                    business['city'] + ', ' + business['state'] +
+                    '</p><p>RESEARCH_ONLY_SENTINEL</p></body></html>')
+            research_payload = {'request_id': 'installed-research', 'mode': 'paste',
+                                'url': 'https://example.com/installed-research',
+                                'retention_confirmed': True, 'content': page,
+                                'observed_at': '2026-10-15'}
+            captured = request(base + '/research', research_payload)['record']
+            assert captured['mode'] == 'paste' and captured['observed_at'] == '2026-10-15'
+            assert captured['content_sha256'] and 'RESEARCH_ONLY_SENTINEL' in captured['excerpt']
+            assert request(base + '/research', research_payload)['record']['id'] == captured['id']
+            assert len(request(base + '/research')['records']) == 1
+            assert request(base + '/investigation') == before_research
+            assert request(base)['review_history_count'] == business['review_history_count']
+            request(base + '/research/' + captured['id'] + '/dismiss', {'dismissed': True})
+            assert request(base + '/research')['records'][0]['dismissed'] is True
             exported = request('/api/exports', {'ids': queue['matching_ids'], 'format': 'csv'})
             with zipfile.ZipFile(io.BytesIO(request(exported['download_url']))) as bundle:
                 assert set(bundle.namelist()) == {'businesses.csv', 'businesses.csv.provenance.json'}
                 assert json.loads(bundle.read('businesses.csv.provenance.json'))['sources']
+                assert b'RESEARCH_ONLY_SENTINEL' not in bundle.read('businesses.csv')
             assert request('/api/state')['exports'][0]['id'] == exported['id']
             server.shutdown()
             server.server_close()
@@ -98,11 +119,17 @@ def verify():
             token = server.app.token
             assert request(base + '/investigation')['draft'] is not None
             assert request(base)['review']['activity_evidence_observed_at'] == '2026-10-15'
+            restored_research = request(base + '/research')['records']
+            assert len(restored_research) == 1 and restored_research[0]['id'] == captured['id']
+            assert restored_research[0]['dismissed'] is True
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
                     'installed_guided_review_and_undo': True,
-                    'installed_review_retry_idempotency': True}
+                    'installed_review_retry_idempotency': True,
+                    'installed_research_capture_and_retry': True,
+                    'installed_research_separate_from_reviews_exports': True,
+                    'installed_research_dismissal_restart': True}
         finally:
             server.shutdown()
             server.server_close()

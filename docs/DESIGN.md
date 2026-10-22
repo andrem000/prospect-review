@@ -40,7 +40,11 @@ Suppression supports identifying phone, dedicated domain, specific shared-platfo
 
 ## Boundaries
 
-The tool opens local files and SQLite databases. It does not crawl websites, collect new listings, verify URLs, send messages or connect to a CRM. The demo's dates and evidence are fictional and fixed for reproducibility.
+The tool opens local files and SQLite databases. Optional research assistance checks a single supplied public page after an explicit request, or analyzes saved text/HTML without fetching. It does not discover listings, run background crawls, execute page scripts, send messages or connect to a CRM. The demo's dates and evidence are fictional and fixed for reproducibility.
+
+Research capture is separate from human review. Compact evidence cards retain the source URL, capture mode/time, observation date, content hash, selected excerpt and explainable clues. The full page is not stored. Matching names, phones and locations support proposals; missing evidence is not a contradiction, and a working page does not establish current business activity. Proposals do not change decisions until a user brings one into a draft and saves it through the existing review workflow. A changed business identity invalidates old proposals.
+
+Explicit network checks validate public destinations and redirects, pin connections to validated addresses, verify TLS, respect robots restrictions and bound response sizes and work. They send no listing record, cookies, saved credentials or session token to the target. Network work occurs outside the app's mutation lock; identity/contact controls are checked again before saving evidence. Saved-page analysis performs no network requests and retains its operator-supplied observation date. External text and structured claims remain untrusted, including JSON-LD. No confidence score is a substitute for human source review.
 
 The working dataset is loaded into memory. Tests cover synthetic cases, not representative market precision or national-scale performance. Finite host and category rules can miss providers or misclassify records. Historical website evidence is conservative, and a dated `no_site_found` review never proves current absence. `qualified` describes the configured evidence rules; it is not contact permission or proof of demand.
 

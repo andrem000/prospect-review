@@ -39,6 +39,18 @@ A later website correction preserves other decisions. Previously recorded activi
 
 The default app profile covers all supported US states, using the bundled trade rules. Settings let you adjust geography, trade groups and freshness. Qualification reflects those settings and recorded evidence; it is not contact permission. The app sends no messages.
 
+## Research assistance
+
+Open the research area beside the identity or website evidence. Supply a public website URL and explicitly confirm that you may retain its evidence. Checking the URL sends a request to that site from your machine; the business record, app session token and imported file are not sent. There is no paid API or account to configure.
+
+The app reads one page, subject to public-address, robots, redirect, size and time limits. It does not run JavaScript, sign in, solve challenges, follow extracted links automatically or search for new businesses. A blocked, unavailable or unsupported page is an incomplete check, never evidence that a website does not exist. Use the saved-page option for text or HTML you already have permission to use, with its source URL and actual observation date. Saved-page analysis performs no network request and does not independently verify that content.
+
+Research cards show the capture method, capture time, observation date, title, selected excerpt, source link and concrete matching, conflicting or missing details. The content hash identifies the supplied page bytes; it does not prove authorship or truth. Multiple conflicting business identities reduce confidence. Page availability does not refresh activity evidence or prove the business operates today.
+
+Inspect the original source and proposed answer before using it. A proposal fills only the chosen identity or website draft question; it does not save a review. Existing unfinished answers require explicit replacement confirmation. Other question drafts remain intact. Edit the proposal as needed, then use the normal dated review flow to save your decision. A changed business identity makes older proposals stale; contact-excluded businesses cannot start new research or apply proposals.
+
+Cards persist in the workspace across restart. Dismiss and restore cards to manage the evidence list without changing saved reviews. Research excerpts are not included in CSV/JSON export bundles; evidence URL and notes enter exported review data only when you explicitly save a review. The app's matching rules are assistance, not an independent verification service.
+
 ## Exclusions and exports
 
 Import an existing exclusion file through Settings before relying on a queue. CSV, JSON and JSONL use the suppression keys in the [reference](REFERENCE.md#suppression-and-reconciliation). Exclusions remain in the workspace and are visible in the excluded audit view.

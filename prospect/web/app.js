@@ -27,11 +27,11 @@
   function guard(fn) { if(S.investigation && !S.advancedDirty){
     if(S.reviewSaving || S.navigating){notice('Your work is saving. Please wait.');return;}
     S.navigating=true;
-    persistDraft().then(()=>{resolveDeskNotice('Draft saved locally.');return fn();}).catch(showDeskError).finally(()=>{S.navigating=false;});
+    persistDraft().then(()=>{resolveDeskNotice('Draft saved locally.');resolveResearchNotice('Draft saved locally.');return fn();}).catch(showDeskError).finally(()=>{S.navigating=false;});
     return;
   } if(S.reviewSaving){notice('Your review is saving. Please wait before changing views.');return;}if(!S.dirty){fn();return;} pendingNavigation=fn; $('#confirm-dialog').showModal(); }
   $('#keep-editing').addEventListener('click',()=>{$('#confirm-dialog').close();pendingNavigation=null;});
-  $('#discard-editing').addEventListener('click',()=>{$('#confirm-dialog').close();S.dirty=false;S.advancedDirty=false;const fn=pendingNavigation;pendingNavigation=null;if(fn)fn();});
+  $('#discard-editing').addEventListener('click',()=>{$('#confirm-dialog').close();S.dirty=false;S.advancedDirty=false;resolveResearchNotice('Advanced review edits discarded.');const fn=pendingNavigation;pendingNavigation=null;if(fn)fn();});
   window.addEventListener('beforeunload',e=>{if(S.dirty){e.preventDefault();e.returnValue='';}});
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>guard(()=>navigate(b.dataset.view))));
   async function state() {S.state=await api('/api/state');$('#version').textContent=`Version ${S.state.version}`;$('#workspace-name').textContent=S.state.workspace||'Local workspace';}
@@ -50,7 +50,7 @@
     append(content,heading(guided?'Guided review':S.detail?'Investigation desk':'Review queue',guided?'One business. Four questions. Save only the evidence you checked.':'Turn listing signals into careful, evidence-backed decisions.',guided?null:append(el('div','actions'),button('Import data',()=>guard(()=>navigate('import')),'primary'))));
     if(!guided)append(content,stats());
     if(!S.state.counts.total){
-      append(content,panel('',append(el('div','empty'),el('div','empty-icon','↥'),el('h2','','A clear workspace. A careful start.'),el('p','','Import a permitted dataset to begin reviewing businesses, or explore the workflow with fictional examples.'),append(el('div','actions'),button('Import a file',()=>navigate('import'),'primary'),button('Try fictional demo',e=>busy(e.currentTarget,async()=>{await api('/api/demo',{});await state();notice('Fictional examples loaded. No businesses have been researched or contacted.');render();},'Loading demo…'))),el('p','small','Local files only · No accounts · No data uploads'))));return;
+      append(content,panel('',append(el('div','empty'),el('div','empty-icon','↥'),el('h2','','A clear workspace. A careful start.'),el('p','','Import a permitted dataset to begin reviewing businesses, or explore the workflow with fictional examples.'),append(el('div','actions'),button('Import a file',()=>navigate('import'),'primary'),button('Try fictional demo',e=>busy(e.currentTarget,async()=>{await api('/api/demo',{});await state();notice('Fictional examples loaded. No businesses have been researched or contacted.');render();},'Loading demo…'))),el('p','small','Local workspace · No accounts · No data uploads'))));return;
     }
     const layout=el('div','queue-layout'+(S.detail?' with-detail':'')+(guided?' guided-layout':''));
     const queue=el('section','panel queue-panel');
@@ -137,6 +137,168 @@
   };
   let draftTimer;
   const copy = value => JSON.parse(JSON.stringify(value));
+  // Session-only input state is separate from durable evidence and review drafts.
+  const researchByBusiness = new Map();
+  let activeResearchRequest = null;
+  function researchState(id) {
+    if(!researchByBusiness.has(id))researchByBusiness.set(id,{open:false,pasteOpen:false,url:'',content:'',observed_at:'',confirmed:false,records:[],loaded:false,loading:false,pending:false,error:'',showDismissed:false,request:null});
+    return researchByBusiness.get(id);
+  }
+  function researchCurrent(id,inv,key) {
+    return S.detail?.id===id && S.investigation===inv && questionOrder[inv.step]===key && !inv.summary;
+  }
+  function researchAllowed() { return Boolean(S.investigation?.can_review) && !S.reviewSaving; }
+  function resolveResearchNotice(message) {
+    if(S.advancedDirty)return;
+    if(S.researchErrorNotice===noticeGeneration && $('#notice').className==='error')notice(message);
+    S.researchErrorNotice=null;
+  }
+
+  async function loadResearch(id,r,refresh) {
+    if(r.loading)return;
+    const generation=r.generation||0;
+    r.loading=true;r.error='';refresh();
+    try {const result=await api(`/api/businesses/${id}/research`);if(generation===(r.generation||0)){r.records=result.records;r.loaded=true;}}
+    catch(error){if(generation===(r.generation||0))r.error='Saved evidence could not be loaded. '+error.message;}
+    finally{r.loading=false;refresh();}
+  }
+
+  async function requestResearch(id,r,mode,refresh) {
+    if(!researchAllowed() || S.detail?.id!==id)return;
+    if(activeResearchRequest){r.error='A page check is already running. Wait for it to finish, then retry.';refresh();return;}
+    if(!r.confirmed){r.error='Confirm permission to retain the page evidence before checking.';refresh();return;}
+    const payload={mode,url:r.url.trim(),retention_confirmed:true};
+    if(mode==='paste'){payload.content=r.content;payload.observed_at=r.observed_at;}
+    const signature=JSON.stringify(payload);
+    if(r.request?.signature!==signature)r.request={signature,body:{...payload,request_id:crypto.randomUUID()}};
+    // Reuse the exact request after an ambiguous failure; never duplicate a capture.
+    activeResearchRequest=r;r.pending=true;r.error='';refresh();
+    try {
+      const result=await api(`/api/businesses/${id}/research`,r.request.body);
+      r.generation=(r.generation||0)+1;
+      r.records=[result.record,...r.records.filter(card=>card.id!==result.record.id)];r.loaded=true;r.request=null;
+      if(S.detail?.id===id)resolveResearchNotice('Page evidence saved. Review the captured clues before deciding.');
+    }catch(error){r.error='Page check unavailable. This says nothing about whether a website exists. '+error.message;}
+    finally{activeResearchRequest=null;r.pending=false;refresh();}
+  }
+
+  async function dismissResearch(id,r,record,refresh) {
+    if(r.mutating)return;r.mutating=true;r.error='';refresh();
+    try {
+      const result=await api(`/api/businesses/${id}/research/${encodeURIComponent(record.id)}/dismiss`,{dismissed:!record.dismissed});
+      r.generation=(r.generation||0)+1;
+      r.records=r.records.map(item=>item.id===record.id?result.record:item);
+      if(S.detail?.id===id)resolveResearchNotice('Research card visibility updated.');
+    }catch(error){r.error='Could not change card visibility. '+error.message;}
+    finally{r.mutating=false;refresh();}
+  }
+
+  async function applyResearch(id,key,record,refresh) {
+    const inv=S.investigation,r=researchState(id);
+    let copied=false;
+    const eligible=()=>researchCurrent(id,inv,key) && researchAllowed() && !S.advancedDirty && !record.stale && !record.dismissed && ['identity','website'].includes(key);
+    if(S.advancedDirty){S.researchErrorNotice=notice('Save or discard your advanced review edits before using a research proposal.',true);return;}
+    if(!eligible() || r.applying)return;
+    const startingNotice=noticeGeneration;
+    r.applying=true;r.error='';refresh();
+    try {
+      // Recheck server-computed staleness/exclusions before copying evidence.
+      const latest=await api(`/api/businesses/${id}/research`);
+      r.records=latest.records;
+      record=latest.records.find(item=>item.id===record.id);
+      if(!record || !eligible())throw new Error('This proposal is no longer available for the selected question. Reload the business to check its current status.');
+      const proposal=record.proposals?.[key];
+      if(!proposal)throw new Error('This page has no proposal for this question.');
+      await persistDraft();
+      if(!eligible())return;
+      const current=entryFor(key);
+      if(Object.values(current).some(value=>value!=='' && value!==null && value!==undefined) && !window.confirm(`Replace the current ${questionLabels[key].toLowerCase()} answer draft with this proposal? Other questions will be retained. No review will be saved.`))return;
+      const fields=key==='identity'?['identity_status','evidence_url','evidence_observed_at','notes']:['website_status','candidate_website','verified_website','evidence_url','evidence_observed_at','notes'];
+      inv.edits[key]=Object.fromEntries(fields.filter(field=>Object.hasOwn(proposal,field)).map(field=>[field,proposal[field]]));
+      copied=true;
+      changedDraft();await persistDraft();
+      if(researchCurrent(id,inv,key) && !S.advancedDirty && (startingNotice===noticeGeneration || S.researchErrorNotice===noticeGeneration)){notice('Proposal copied to this question’s editable draft. Check the evidence, then save the question when ready.');S.researchErrorNotice=null;}
+    }catch(error){r.error='Proposal not saved as a review. '+error.message;if(inv.error && S.investigation===inv)showDeskError(error);}
+    finally{r.applying=false;if(copied && researchCurrent(id,inv,key) && !S.advancedDirty)render();else refresh();}
+  }
+
+  function renderResearch(b,key) {
+    const id=b.id,inv=S.investigation,r=researchState(id),slot=el('div','research-slot');
+    if(r.lastInvestigation!==inv){r.lastInvestigation=inv;r.loaded=false;}
+    const refresh=()=>{if(researchCurrent(id,inv,key))draw();};
+    function draw() {
+      slot.replaceChildren();
+      const details=el('details','research-assistance');details.open=r.open;
+      append(details,el('summary','','Research assistance'),el('p','small research-intro','Check one supplied public page for identity and website clues. Proposals are editable drafts; you decide what to save.'));
+      details.addEventListener('toggle',()=>{
+        const opened=details.open&&!r.open;r.open=details.open;
+        if(opened)loadResearch(id,r,refresh);
+      });
+      if(!inv.can_review)append(details,el('p','callout warning','Contact exclusion retained. Saved evidence can be inspected or dismissed; new checks and proposal use are unavailable.'));
+      else {
+        const form=el('form','research-form'),url=input('url',r.url,true);
+        url.placeholder='https://example.com/about';url.addEventListener('input',()=>{r.url=url.value;});
+        const confirmation=check('I have permission to retain selected page evidence in this local workspace.',r.confirmed);confirmation.input.required=true;
+        confirmation.input.addEventListener('change',()=>{r.confirmed=confirmation.input.checked;});
+        const fetchButton=el('button','primary',r.pending?'Checking page…':'Fetch & check page');fetchButton.type='submit';fetchButton.disabled=r.pending;
+        append(form,field('Public page URL',url,'A single deliberate fetch. No background search or linked-page crawling.'),confirmation.label,fetchButton);
+        form.addEventListener('submit',event=>{event.preventDefault();requestResearch(id,r,'fetch',refresh);});
+        const paste=el('details','research-paste');paste.open=r.pasteOpen;
+        paste.addEventListener('toggle',()=>{r.pasteOpen=paste.open;});
+        const saved=el('textarea');saved.rows=5;saved.value=r.content;saved.maxLength=524288;saved.spellcheck=false;
+        saved.addEventListener('input',()=>{r.content=saved.value;});
+        const observed=input('date',r.observed_at);observed.max=new Date().toISOString().slice(0,10);
+        observed.addEventListener('input',()=>{r.observed_at=observed.value;});
+        const analyze=button('Analyze saved page',()=>{
+          if(!url.reportValidity() || !confirmation.input.reportValidity())return;
+          if(!r.content.trim() || !r.observed_at){r.error='Provide saved page content and the date you observed it.';refresh();return;}
+          if(!observed.reportValidity())return;
+          requestResearch(id,r,'paste',refresh);
+        });analyze.disabled=r.pending;
+        append(paste,el('summary','','Use saved page text instead'),el('p','small','Paste text or HTML you already saved from the source URL above. This option does not fetch the page or independently verify the supplied content.'),field('Saved page text / HTML',saved,'Up to 512 KiB. Only selected evidence and its content hash are retained.'),field('Page observed on',observed,'Use the actual nonfuture date you observed this saved page.'),analyze);
+        append(form,paste);append(details,form);
+      }
+      const status=el('p','small research-status',r.pending?'Checking the supplied page… You can keep editing your question.':r.loading?'Loading saved evidence…':'');status.setAttribute('role','status');status.setAttribute('aria-live','polite');append(details,status);
+      if(r.error){const error=el('p','inline-error',r.error);error.setAttribute('role','alert');append(details,error);}
+      const dismissed=r.records.filter(record=>record.dismissed).length;
+      append(details,append(el('div','research-toolbar'),el('h4','',`Saved evidence · ${r.records.length}`),button(r.loading?'Loading…':'Reload evidence',()=>loadResearch(id,r,refresh))));
+      if(dismissed)append(details,button(r.showDismissed?`Hide dismissed (${dismissed})`:`Show dismissed (${dismissed})`,()=>{r.showDismissed=!r.showDismissed;refresh();},'research-show-dismissed'));
+      if(r.loaded&&!r.records.length)append(details,el('p','small','No page evidence saved for this business yet.'));
+      for(const record of r.records.filter(record=>!record.dismissed||r.showDismissed))append(details,researchCard(id,key,r,record,refresh));
+      append(details,el('p','small research-footnote','Research cards stay in this workspace and are not included in CSV/JSON exports. Saved review answers retain their normal evidence URL and notes. A loaded page alone does not prove current activity.'));
+      append(slot,details);
+    }
+    draw();
+    if(r.open&&!r.loaded&&!r.loading)queueMicrotask(()=>loadResearch(id,r,refresh));
+    return slot;
+  }
+
+  function researchCard(id,key,r,record,refresh) {
+    const card=el('article',`evidence-card research-card${record.dismissed?' research-dismissed':''}`);
+    append(card,append(el('div','tags'),el('span','pill muted',record.mode==='paste'?'Saved page · user supplied':'Fetched public page'),record.stale?el('span','pill warning','Stale · business inputs changed'):null,record.dismissed?el('span','pill muted','Dismissed'):null),el('h4','',record.title||'Captured page'),link(record.final_url||record.url,'Open captured source ↗'),el('p','small',record.final_url||record.url),el('p','small',`Page observed: ${dateText(record.observed_at)}`),el('p','small',`Captured / analyzed locally: ${dateText(record.captured_at)}`));
+    if(record.mode==='paste')append(card,el('p','small','Basis: supplied saved content; no independent fetch.'));
+    if(record.final_url&&record.final_url!==record.url)append(card,append(el('p','small'),el('span','','Requested source: '),link(record.url)));
+    if(record.excerpt)append(card,el('blockquote','research-excerpt',record.excerpt));
+    for(const [kind,label] of [['match','Matching clues'],['conflict','Conflicting clues'],['unknown','Missing / uncertain clues']]) {
+      const signals=(record.signals||[]).filter(signal=>signal.kind===kind);
+      if(!signals.length)continue;
+      const group=el('div',`research-clues ${kind}`),list=el('ul');
+      signals.forEach(signal=>append(list,append(el('li'),el('strong','',signal.label||human(signal.field)),el('span','',` — ${signal.detail||'No detail supplied'}`))));
+      append(card,append(group,el('h5','',label),list));
+    }
+    if(record.limitations?.length)append(card,append(el('div','research-limitations'),el('h5','','Limits of this check'),...record.limitations.map(text=>el('p','small',text))));
+    for(const question of ['identity','website']) {
+      const proposal=record.proposals?.[question];if(!proposal)continue;
+      const box=el('div','research-proposal');append(box,el('h5','',`${questionLabels[question]} proposal · ${human(proposal[question==='identity'?'identity_status':'website_status'])}`));
+      if(proposal.candidate_website||proposal.verified_website)append(box,el('p','small',proposal.verified_website||proposal.candidate_website));
+      append(box,el('p','small',proposal.notes||'Check the captured clues before deciding.'));
+      if(question===key){const use=button('Use proposal in this question’s draft',()=>applyResearch(id,key,record,refresh));use.disabled=!researchAllowed()||record.stale||record.dismissed||!r.loaded||r.loading||r.applying;append(box,use);}
+      else append(box,el('p','small',`Open the ${questionLabels[question].toLowerCase()} question to use this proposal.`));
+      append(card,box);
+    }
+    append(card,jsonDetails('Capture provenance',{mode:record.mode,requested_url:record.url,final_url:record.final_url,observed_at:record.observed_at,captured_at:record.captured_at,content_sha256:record.content_sha256,links:record.links||[]}),button(record.dismissed?'Restore card':'Dismiss card',()=>dismissResearch(id,r,record,refresh)));
+    return card;
+  }
 
   function setupInvestigation(data) {
     clearTimeout(draftTimer);
@@ -294,6 +456,7 @@
   function renderEvidence(b,key) {
     const area=el('section','desk-evidence');
     append(area,el('p','eyebrow',`QUESTION ${S.investigation.step+1} OF 4`),el('h3','desk-question',questionInfo[key][0]),el('p','desk-help',questionInfo[key][1]));
+    if(key==='identity'||key==='website')append(area,renderResearch(b,key));
     const observations=b.observations||[];
     if(!observations.length)append(area,el('p','callout warning','No original observations were supplied. Add your checked evidence to make a decision.'));
     observations.forEach((o,index)=>{

@@ -23,3 +23,9 @@ These fields are operator assertions, not legal verification. Do not change them
 Import batches preserve the supplied manifest, notice contents and source-file hash. Exports write a `.provenance.json` sidecar with the relevant sources and notices. Keep that sidecar with the export and review its contents before sharing. An audit export can include excluded records; provenance and source notices may also contain information you should not publish.
 
 Listing availability, a published contact address, a score or a saved review does not authorize outreach. Maintain your own current source-rights, recipient, objection and contact-history checks outside the software.
+
+## Research evidence
+
+The optional research panel requires confirmation that you may retain the page evidence. It saves selected excerpts, extracted clues and capture metadata, not a full copy of the page. This assertion is separate from the source-rights manifest for imported listing files and does not establish permissions automatically. Saved-page content must also be material you may use; record its actual observation date.
+
+Research cards remain in the local workspace and are not included in data-export ZIPs. A proposal you explicitly save as a review contributes its evidence URL and notes to the normal exported review record. Review those notes before sharing; the software's MIT license does not relicense source material.

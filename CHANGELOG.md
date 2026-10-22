@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — Unreleased
+
+- Add explicit research assistance for a supplied public website link, with a saved-page text/HTML option that works offline.
+- Show captured source evidence, dates, matching and conflicting identity clues, and cautious website/identity proposals for human review.
+- Save compact research cards locally with source hashes; allow reversible dismissal and resume them after restart.
+- Bring a selected proposal into an editable question draft without committing a review or changing other answers.
+- Bound website requests and reject private network destinations; retain existing contact exclusions and review controls.
+
 ## 0.3.0 — 2026-10-22
 
 - Add an Investigation desk with a business queue, readable source evidence and separate identity, website, activity and service-fit questions.

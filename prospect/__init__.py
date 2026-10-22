@@ -1,2 +1,2 @@
-"""Offline US service-business prospect discovery."""
-__version__ = "0.3.0"
+"""Local evidence review for US service-business listings."""
+__version__ = "0.4.0"
