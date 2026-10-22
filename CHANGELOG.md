@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — Unreleased
+## 0.3.0 — 2026-10-22
 
 - Add an Investigation desk with a business queue, readable source evidence and separate identity, website, activity and service-fit questions.
 - Add guided review with question navigation, deferral, an editable summary and an atomic save of the questions actually checked.
