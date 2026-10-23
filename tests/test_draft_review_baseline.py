@@ -205,6 +205,7 @@ class DraftReviewBaselineTests(TestCase):
             db.set_authorizer(reject_final_column)
             with self.assertRaises(sqlite3.DatabaseError):
                 investigation.initialize(db)
-            db.set_authorizer(None)
+            # Restore an allowing callback on every supported Python version.
+            db.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
             self.assertNotIn('draft_review_revision', {r['name'] for r in db.execute('PRAGMA table_info(investigation_state)')})
         self.start()
