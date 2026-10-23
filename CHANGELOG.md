@@ -1,12 +1,12 @@
 # Changelog
 
-## 0.7.0 — Unreleased
+## 0.7.0 — 2026-10-23
 
 - Find unfinished question drafts in a dedicated worklist, including changed or unknown review contexts and read-only contact holds.
 - Compare each draft question with its original review context and current saved decision, then deliberately keep input, use current work or defer.
 - Preserve unresolved questions and their evidence context when saving another question; keep source acceptance separate from saved-review resolution.
 
-## 0.6.1 — Unreleased
+## 0.6.1 — 2026-10-23
 
 - Keep undated activity assertions undated instead of borrowing another check’s observation date; retain explicit inconclusive activity checks in the saved-answer view.
 - Preserve each draft’s saved-review context across reopening and require explicit comparison after a correction or unknown legacy context.
