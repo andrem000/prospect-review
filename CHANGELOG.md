@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1 — 2026-10-27
+
+- Protect unfinished input throughout Undo and the following refresh; reconcile uncertain responses before retrying.
+- Restore unchecked effective questions when undoing their first save, while retaining review history and the restored draft.
+
 ## 0.7.0 — 2026-10-23
 
 - Find unfinished question drafts in a dedicated worklist, including changed or unknown review contexts and read-only contact holds.

@@ -22,21 +22,31 @@ def answers(review, question):
 def resolve(business):
     bases, reviewed, previous, before_sessions = {}, set(), {}, {}
     for row in business.get('reviews', []):
-        session = row.get('investigation_session')
-        question = row.get('investigation_question')
+        undo = row.get('investigation_undo')
+        # Compensating records may carry older question metadata verbatim;
+        # they restore state rather than asserting that question again.
+        session = None if undo else row.get('investigation_session')
+        question = None if undo else row.get('investigation_question')
         if session and question in FIELDS and session not in before_sessions:
             # Capture the actual pre-session association, not before_questions:
             # those retained snapshots may already have been superseded by CLI.
-            before_sessions[session] = dict(bases)
+            before_sessions[session] = (dict(bases), set(reviewed))
         for key in FIELDS:
             current = answers(row, key)
             if any(v != core.REVIEW_DEFAULTS.get(f) and v is not None for f, v in current.items()):
                 reviewed.add(key)
             if current != answers(previous, key):
                 bases.pop(key, None)
-        if row.get('investigation_undo'):
-            bases = {q: entry for q, entry in before_sessions.get(row['investigation_undo'], {}).items()
+        if undo:
+            before = before_sessions.get(undo)
+            # Without the session boundary, checkedness cannot be reconstructed.
+            # Retain historical checks conservatively, with an unknown basis.
+            prior_bases, prior_reviewed = before if before is not None else ({}, reviewed)
+            bases = {q: entry for q, entry in prior_bases.items()
                      if answers(entry, q) == answers(row, q)}
+            reviewed = set(prior_reviewed)
+        if row.get('activity_asserted') is True:
+            reviewed.add('activity')
         if question in FIELDS and session:
             bases[question] = {key: row.get(key, core.REVIEW_DEFAULTS.get(key))
                                for key in (*FIELDS[question], *EVIDENCE)}

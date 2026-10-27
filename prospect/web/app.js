@@ -397,6 +397,7 @@
   async function persistDraft() {
     const inv=S.investigation;
     if(!inv || !S.detail || !inv.can_review)return;
+    if(inv.undoPending)throw new Error('Undo outcome is not confirmed. Check Undo again before saving or leaving this work.');
     if(inv.saving)return inv.saving;
     if(inv.sequence===inv.savedSequence)return;
     if(inv.conflict)throw new Error('Another review or draft changed. Resolve the conflict below before continuing.');
@@ -438,6 +439,7 @@
     const box=document.querySelector('[data-draft-error]');
     if(!box)return;
     box.replaceChildren(el('p','inline-error',error.message));
+    if(inv.undoPending){append(box,button('Check Undo outcome',()=>undoInvestigation().catch(showDeskError)));draftStatus();return;}
     if(inv.source_changed&&!inv.conflict){append(box,button('Review updated evidence',()=>reviewUpdatedEvidence()));draftStatus();return;}
     if(inv.conflict) {
       append(box,el('p','small','Your answers are retained. Load the newer review for comparison, then explicitly keep your draft or use the newer draft.'),button('Compare latest saved work',async()=>{
@@ -690,6 +692,16 @@
     const form=el('form'), entry=entryFor(key), controls={};
     const saveInput=(name,value)=>{
       entry[name]=value;
+      if(S.investigation!==inv){
+        // An already queued event can arrive after the restored desk replaced
+        // its form. Retain it only on that business, with explicit comparison.
+        if(inv.undoRestored&&S.detail?.id===b.id&&S.investigation){
+          S.investigation.edits[key]=copy(entry);changedDraft();
+          S.investigation.conflict=true;
+          showDeskError(new Error('Input arrived after Undo. It is retained here but is not saved. Compare latest saved work before keeping it.'));
+        }
+        return;
+      }
       inv.edits[key]=copy(entry);
       changedDraft();
     };
@@ -810,16 +822,70 @@
 
   async function undoInvestigation() {
     if(S.reviewSaving)return;
-    await persistDraft();
-    const inv=S.investigation,id=S.detail.id;
-    if(Object.keys(inv.edits).length)throw new Error('Save or discard your unfinished question edits before undoing the last review.');
+    const inv=S.investigation,id=S.detail?.id;
+    if(!inv?.can_review||!id)return;
+    const session=inv.undoPending||inv.latest_session;
+    if(!session||(!inv.undoPending&&!session.can_undo))return;
+    const current=()=>S.investigation===inv&&S.detail?.id===id;
+    // Cancel older detail reads and lock the entire transition, including its
+    // initial draft flush and dependent reads. A queued event is still retained.
+    detailSerial++;
     S.reviewSaving=true;
+    const locked=Array.from(document.querySelectorAll('.investigation input,.investigation select,.investigation textarea,.investigation button')).filter(node=>!node.disabled);
+    locked.forEach(node=>{node.disabled=true;});
+    let sequence=inv.undoPending?.sequence??inv.sequence;
     try {
-      await api(`/api/businesses/${id}/investigation/undo`,{session_id:inv.latest_session.session_id,review_revision:inv.review_revision});
-      const latest=await deskSnapshot(id);
-      S.detail=latest.business;setupInvestigation(latest);await state();render();focusDesk();
-      notice('Last save undone. Submitted answers are restored as an editable local draft; history and durable exclusions remain.');
-    }catch(error){showDeskError(error);throw error;}finally{S.reviewSaving=false;}
+      let latest,mutationError;
+      if(inv.undoPending){
+        // A previous request may have committed despite a lost response. Read
+        // first; only an explicitly untouched matching session may be retried.
+        latest=await deskSnapshot(id);
+        if(!current())return;
+        if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
+        if(!latest.latest_session.undone){
+          inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
+          if(!latest.latest_session.can_undo)throw new Error('The saved review changed. This Undo is no longer available.');
+          throw new Error('Undo was not recorded. Your input is retained. Check it before trying Undo again.');
+        }
+      }else{
+        await persistDraft();
+        if(!current())return;
+        if(Object.keys(inv.edits).length||S.advancedDirty)throw new Error('Save or discard your unfinished question edits before undoing the last review.');
+        sequence=inv.sequence;
+        inv.undoPending={session_id:session.session_id,sequence};S.dirty=true;
+        clearTimeout(draftTimer);
+        try{await api(`/api/businesses/${id}/investigation/undo`,{session_id:session.session_id,review_revision:inv.review_revision});}
+        catch(error){mutationError=error;}
+        if(!current())return;
+        latest=await deskSnapshot(id);
+        if(!current())return;
+        if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
+        if(!latest.latest_session.undone){
+          inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
+          throw mutationError||new Error('Undo was not recorded. Your input is retained.');
+        }
+      }
+      let summaryError;
+      try{await state();}catch(error){summaryError=error;}
+      if(!current())return;
+      inv.undoPending=null;
+      // A queued input event must never become a saved claim or overwrite the
+      // restored server draft. Keep its old context for explicit comparison.
+      if(inv.sequence!==sequence||S.advancedDirty){
+        inv.conflict=true;inv.error='Last save undone. Newer input is retained here but is not saved. Compare latest saved work before keeping it.';S.dirty=true;
+        showDeskError(new Error(inv.error));return;
+      }
+      inv.undoRestored=true;
+      S.detail=latest.business;setupInvestigation(latest);
+      render();focusDesk();
+      notice(summaryError?'Last save undone and restored draft saved. Workspace summary could not refresh: '+summaryError.message:'Last save undone. Submitted answers are restored as an editable local draft; history and durable exclusions remain.',Boolean(summaryError));
+    }catch(error){
+      if(current()){
+        if(inv.undoPending){S.dirty=true;error=new Error('Undo outcome is not confirmed. Your input is retained here. Check Undo outcome before retrying or closing. '+error.message);}
+        showDeskError(error);
+      }
+      throw error;
+    }finally{S.reviewSaving=false;locked.forEach(node=>{node.disabled=false;});}
   }
 
   const changesState={filter:'pending',prior:false,offset:0,limit:25,generation:0};
