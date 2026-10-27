@@ -1,4 +1,5 @@
 """Private, revisioned investigation drafts and append-only guided sessions."""
+import hashlib
 import json
 import re
 import secrets
@@ -38,6 +39,9 @@ def initialize(db):
           request_id TEXT UNIQUE NOT NULL, payload TEXT NOT NULL, result TEXT NOT NULL,
           before_review TEXT NOT NULL, before_questions TEXT NOT NULL, submitted TEXT NOT NULL,
           before_draft TEXT, final_revision INTEGER NOT NULL, undone INTEGER NOT NULL DEFAULT 0)''')
+        for field in ('undo_result', 'undo_payload'):
+            if field not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_sessions)')}:
+                db.execute('ALTER TABLE investigation_sessions ADD COLUMN ' + field + ' TEXT')
         if 'draft_source_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_state)')}:
             db.execute('ALTER TABLE investigation_state ADD COLUMN draft_source_revision TEXT')
         if 'source_revision' not in {r['name'] for r in db.execute('PRAGMA table_info(investigation_sessions)')}:
@@ -278,7 +282,8 @@ def read(db, bid, business):
     if row:
         latest = dict(session_id=row['session_id'], questions=json.loads(row['submitted']),
                       review_revision=row['final_revision'], undone=bool(row['undone']),
-                      can_undo=not row['undone'] and row['final_revision'] == current)
+                      can_undo=not row['undone'] and row['final_revision'] == current,
+                      undo_result=json.loads(row['undo_result'])['undo_result'] if row['undo_result'] else None)
     saved = review_state.saved_answers(business)
     return dict(review_revision=current, draft_revision=draft_revision, **draft_context(db, bid, business),
                 questions=review_state.editor_questions(saved), question_history=questions, saved_answers=saved,
@@ -407,18 +412,95 @@ def commit(db, bid, data, business):
     return result
 
 
+def _undo_snapshot(db, bid):
+    """Bind confirmation to stored facts, independent of mutable UI labels."""
+    business = next(b for b in core.all_businesses(db) if b['id'] == bid)
+    row = db.execute('SELECT * FROM investigation_sessions WHERE business_id=? ORDER BY rowid DESC LIMIT 1', (bid,)).fetchone()
+    stored = db.execute('SELECT * FROM investigation_state WHERE business_id=?', (bid,)).fetchone()
+    keys = set(core.suppression_keys(business))
+    exclusions = [dict(r) for r in db.execute('SELECT * FROM suppressions ORDER BY kind,value')
+                  if (r['kind'], r['value']) in keys]
+    blocked = business['review'].get('disposition') == 'contacted' or bool(exclusions)
+    source = changes.source_revision(db, bid)
+    binding = dict(business_id=bid, session=dict(row) if row else None,
+                   reviews=business.get('reviews', []), draft=dict(stored) if stored else None,
+                   source_revision=source, exclusion_keys=sorted(keys), exclusions=exclusions)
+    token = hashlib.sha256(encoded(binding).encode('utf-8')).hexdigest()
+    return row, business, blocked, source, token
+
+
+def undo_preview(db, bid, business):
+    """Read from one caller-owned SQLite snapshot; opening/cancelling writes nothing."""
+    row, current_business, blocked, source, token = _undo_snapshot(db, bid)
+    current = revision(db, bid)
+    number, draft, _ = state(db, bid)
+    eligible = bool(row and not row['undone'] and row['final_revision'] == current and not blocked)
+    reason = ('Contact-excluded businesses cannot be investigated' if blocked else
+              'Only the latest untouched investigation save can be undone' if not eligible else None)
+    submitted = json.loads(row['submitted']) if row else {}
+    retained = (draft or {}).get('questions', {})
+    overlaps = [q for q in CHOICES if q in submitted and q in retained]
+    before_revision = row['before_review_revision'] if row else None
+    before = saved_at(db, bid, before_revision) if row else None
+    return dict(business_id=bid, eligible=eligible, reason=reason,
+                session_id=row['session_id'] if row else None, review_revision=current,
+                draft_revision=number, source_revision=source, preview_token=token if eligible else None,
+                before_review_revision=before_revision, before_context_unknown=before is None,
+                current_saved_answers=review_state.saved_answers(current_business), before_saved_answers=before,
+                submitted_questions=submitted,
+                restored_draft_questions={q: entry for q, entry in submitted.items() if q not in retained},
+                retained_draft_questions=retained,
+                unrelated_questions=[q for q in CHOICES if q in retained and q not in submitted],
+                overlap_questions=overlaps, current_draft_context=draft_context(db, bid, current_business),
+                excluded_reasons=business.get('excluded_reasons', []), can_review=not blocked,
+                session_source_revision=row['source_revision'] if row else None)
+
+
 def undo(db, bid, data, business):
-    checked_keys(data, ('session_id', 'review_revision'), ('session_id', 'review_revision'))
-    if not isinstance(data['session_id'], str) or len(data['session_id']) > 128:
+    checked_keys(data, ('session_id', 'review_revision', 'preview_token', 'draft_revision',
+                       'source_revision', 'keep_questions'), ('session_id', 'review_revision'))
+    if not isinstance(data['session_id'], str) or not data['session_id'] or len(data['session_id']) > 128:
         raise ValueError('Invalid session_id')
+    confirmed = 'preview_token' in data
+    if confirmed:
+        if not isinstance(data['preview_token'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['preview_token']):
+            raise ValueError('preview_token must identify the displayed Undo preview')
+        if not isinstance(data.get('source_revision'), str) or not re.fullmatch(r'[a-f0-9]{64}', data['source_revision']):
+            raise ValueError('source_revision must identify the displayed source evidence')
+        keep = data.get('keep_questions')
+        if (not isinstance(keep, list) or any(not isinstance(q, str) or q not in CHOICES for q in keep)
+                or len(set(keep)) != len(keep)):
+            raise ValueError('Explicitly confirm the exact overlapping questions to keep')
+        for field in ('review_revision', 'draft_revision'):
+            if type(data.get(field)) is not int or data[field] < 0:
+                raise ValueError(field + ' must be a nonnegative integer')
+    elif any(field in data for field in ('draft_revision', 'source_revision', 'keep_questions')):
+        raise ValueError('Undo confirmation fields require a preview_token')
+    payload = encoded(data)
     with db:
         db.execute('BEGIN IMMEDIATE')
-        number, current_draft, _ = check_revisions(db, bid, data, with_draft=False)
-        row = db.execute('SELECT * FROM investigation_sessions WHERE business_id=? ORDER BY rowid DESC LIMIT 1', (bid,)).fetchone()
+        # A repeated confirmed request reports the original completed outcome,
+        # even after newer edits. It never reapplies or overwrites that newer work.
+        completed = db.execute('SELECT * FROM investigation_sessions WHERE business_id=? AND session_id=?',
+                               (bid, data['session_id'])).fetchone()
+        if (confirmed and completed and completed['undone'] and completed['undo_payload'] == payload
+                and completed['undo_result']):
+            return json.loads(completed['undo_result'])
+        number, current_draft, _ = check_revisions(db, bid, data, with_draft=confirmed)
+        row, current_business, blocked, source, token = _undo_snapshot(db, bid)
         if not row or row['session_id'] != data['session_id'] or row['undone'] or row['final_revision'] != revision(db, bid):
             raise Conflict('Only the latest untouched investigation save can be undone')
-        if contact_excluded(db, bid):
+        if confirmed and (data['preview_token'] != token or data['source_revision'] != source):
+            raise Conflict('Undo preview changed; compare the latest saved work and unfinished draft again')
+        submitted = json.loads(row['submitted'])
+        retained = (current_draft or {}).get('questions', {})
+        overlaps = [q for q in CHOICES if q in submitted and q in retained]
+        if confirmed and set(data['keep_questions']) != set(overlaps):
+            raise ValueError('Explicitly confirm the exact overlapping questions to keep')
+        if blocked:
             raise ValueError('Contact-excluded businesses cannot be investigated')
+        before_saved = saved_at(db, bid, row['before_review_revision'])
+        current_saved = review_state.saved_answers(current_business)
         before = json.loads(row['before_review'])
         restored = {**core.REVIEW_DEFAULTS, **before}
         restored.pop('created_at', None)
@@ -431,13 +513,13 @@ def undo(db, bid, data, business):
         before_baselines = json.loads(row['before_draft_review_revisions'])
         draft = dict(step=previous_draft['step'] if previous_draft else 0,
                      mode=previous_draft['mode'] if previous_draft else 'workspace',
-                     questions={**json.loads(row['submitted']), **(current_draft['questions'] if current_draft else {})})
+                     questions={**submitted, **retained})
         db.execute('INSERT INTO reviews(business_id,created_at,data) VALUES(?,?,?)', (bid, recorded, encoded(restored)))
         restored_source = draft_source(db, bid) if current_draft else row['source_revision']
         # A newer draft may override some submitted questions, but cannot certify
         # the source context of older answers restored alongside it.
-        session_contributes = any(q not in (current_draft or {}).get('questions', {}) for q in json.loads(row['submitted']))
-        if session_contributes and row['source_revision'] != changes.source_revision(db, bid):
+        session_contributes = any(q not in retained for q in submitted)
+        if session_contributes and row['source_revision'] != source:
             restored_source = row['source_revision']
         # Undo restores the exact pre-session effective review. Only baseline
         # context proven against that same snapshot can follow its compensating
@@ -445,12 +527,20 @@ def undo(db, bid, data, business):
         # legacy session with unknown context, still needs explicit comparison.
         restored_baselines = {}
         for q in draft['questions']:
-            if q in (current_draft or {}).get('questions', {}):
+            if q in retained:
                 baseline = current_baselines.get(q)
             else:
                 baseline = before_baselines.get(q, row['before_review_revision'] if json.loads(row['before_draft']) is None else None)
             restored_baselines[q] = revision(db, bid) if baseline is not None and baseline == row['before_review_revision'] else baseline
         write_state(db, bid, number + 1, draft, json.loads(row['before_questions']), restored_source,
                     review_baselines=restored_baselines)
-        db.execute('UPDATE investigation_sessions SET undone=1 WHERE session_id=?', (row['session_id'],))
-    return dict(review_revision=revision(db, bid), draft_revision=number + 1, review={**restored, 'created_at': recorded})
+        summary = dict(restored_decisions=[q for q in CHOICES if
+                           (q in submitted if before_saved is None else current_saved.get(q) != before_saved.get(q))],
+                       session_restored_questions=[q for q in CHOICES if q in submitted and q not in retained],
+                       retained_questions=[q for q in CHOICES if q in retained], overlap_questions=overlaps,
+                       before_context_unknown=before_saved is None, **draft_context(db, bid))
+        result = dict(session_id=row['session_id'], review_revision=revision(db, bid), draft_revision=number + 1,
+                      review={**restored, 'created_at': recorded}, undo_result=summary)
+        db.execute('UPDATE investigation_sessions SET undone=1,undo_result=?,undo_payload=? WHERE session_id=?',
+                   (encoded(result), payload if confirmed else None, row['session_id']))
+    return result

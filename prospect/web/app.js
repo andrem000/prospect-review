@@ -439,7 +439,12 @@
     const box=document.querySelector('[data-draft-error]');
     if(!box)return;
     box.replaceChildren(el('p','inline-error',error.message));
-    if(inv.undoPending){append(box,button('Check Undo outcome',()=>undoInvestigation().catch(showDeskError)));draftStatus();return;}
+    if(inv.undoPending){
+      if(inv.undoTrigger)inv.undoTrigger.textContent='Check Undo outcome';
+      append(box,button('Check Undo outcome',()=>undoInvestigation().catch(showDeskError)));
+      if(inv.undoArea){inv.undoArea.hidden=false;inv.undoArea.replaceChildren(el('p','callout warning','Undo outcome is not confirmed. Check the recorded outcome before leaving this work.'),button('Check Undo outcome',e=>busy(e.currentTarget,()=>undoInvestigation(),'Checking outcome…')),button('Cancel preview',()=>cancelUndoPreview(inv)));}
+      draftStatus();return;
+    }
     if(inv.source_changed&&!inv.conflict){append(box,button('Review updated evidence',()=>reviewUpdatedEvidence()));draftStatus();return;}
     if(inv.conflict) {
       append(box,el('p','small','Your answers are retained. Load the newer review for comparison, then explicitly keep your draft or use the newer draft.'),button('Compare latest saved work',async()=>{
@@ -528,7 +533,13 @@
     const status=el('p','draft-status');status.dataset.draftStatus='';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const errors=el('div','desk-errors');errors.dataset.draftError='';errors.setAttribute('role','alert');
     append(desk,append(el('div','desk-footer'),status,el('p','small','Local draft · no outreach · no contact permission granted')),errors);
-    if(inv.latest_session?.can_undo && inv.can_review)append(desk,append(el('div','undo-bar'),el('p','small','Undo restores the previous decisions. History and durable exclusions remain.'),button('Undo last save',e=>busy(e.currentTarget,()=>undoInvestigation(),'Restoring…'))));
+    if(inv.latest_session?.can_undo && inv.can_review){
+      const preview=el('div','panel-body');preview.hidden=true;preview.dataset.undoPreview='';inv.undoArea=preview;
+      inv.undoTrigger=button('Preview Undo',e=>busy(e.currentTarget,()=>openUndoPreview(),'Loading preview…'));
+      append(desk,append(el('div','undo-bar'),el('p','small','Preview the previous decisions and unfinished work before Undo. History and durable exclusions remain.'),inv.undoTrigger),preview);
+      if(inv.undoPreview)renderUndoPreview(inv,preview);
+    }
+    if(inv.latest_session?.undone&&inv.latest_session.undo_result)append(desk,undoResultSummary(inv.latest_session.undo_result));
     const advanced=el('details','advanced-review');
     append(advanced,el('summary','','Advanced review & full history'));
     if(inv.can_review)append(advanced,el('p','callout','Advanced controls include hold and disposition. Unfinished desk answers remain saved separately.'),reviewForm(b));
@@ -820,15 +831,81 @@
     }catch(error){fail(error);}
   }
 
+  function undoResultSummary(result) {
+    return append(el('section','callout'),el('h3','','Undo recorded'),el('p','',`Previous effective decisions restored: ${(result.restored_decisions||[]).map(q=>questionLabels[q]).join(' · ')||'None recorded'}.`),el('p','',`Session answers restored as unfinished input: ${(result.session_restored_questions||[]).map(q=>questionLabels[q]).join(' · ')||'None'}.`),el('p','',`Newer unfinished answers retained: ${(result.retained_questions||[]).map(q=>questionLabels[q]).join(' · ')||'None'}.`),el('p','small',`At Undo time: previous review snapshot ${result.before_context_unknown?'unknown':'known'}; unfinished saved-review context ${result.review_changed?'changed':'unchanged'}; unfinished review baseline ${result.review_context_unknown?'unknown':'known'}; source context ${result.source_changed?'changed and unaccepted':'unchanged'}.`),el('p','small','This records context at Undo time. Current context appears with each unfinished question and the source warning above. Unfinished answers are not saved review decisions.'));
+  }
+  function cancelUndoPreview(inv) {
+    inv.undoPreviewGeneration=(inv.undoPreviewGeneration||0)+1;inv.undoPreview=null;
+    inv.undoArea?.replaceChildren();
+    if(inv.undoArea)inv.undoArea.hidden=true;
+    if(S.investigation===inv&&inv.undoTrigger){inv.undoTrigger.disabled=false;inv.undoTrigger.textContent=inv.undoPending?'Check Undo outcome':'Preview Undo';inv.undoTrigger.focus();}
+    notice(inv.undoPending?'Preview closed. Undo outcome is not confirmed; use Check Undo outcome before leaving.':'Undo preview cancelled. No review or draft was changed.',Boolean(inv.undoPending));
+  }
+  function invalidateUndoPreview(inv,message) {
+    inv.undoPreview=null;
+    inv.undoArea?.replaceChildren(el('p','callout warning',message),button('Load fresh preview',()=>openUndoPreview()),button('Cancel preview',()=>cancelUndoPreview(inv)));
+  }
+  async function openUndoPreview() {
+    const inv=S.investigation,id=S.detail?.id;
+    if(!inv?.can_review||S.reviewSaving)return;
+    if(inv.undoPending)return undoInvestigation();
+    const box=inv.undoArea;
+    if(box)box.hidden=false;
+    if(inv.sequence!==inv.savedSequence||inv.saving||S.advancedDirty){
+      inv.undoPreview=null;
+      if(box){box.replaceChildren(el('p','callout warning',S.advancedDirty?'Save or discard the advanced review edits before previewing Undo.':'Save your current draft before previewing Undo. Opening or cancelling a preview does not save input.'));
+        if(!S.advancedDirty)append(box,button('Save draft first',e=>busy(e.currentTarget,async()=>{await persistDraft();if(S.investigation===inv&&S.detail?.id===id)await openUndoPreview();},'Saving draft…')));
+      }
+      notice(S.advancedDirty?'Save or discard advanced edits before previewing Undo.':'Save the unfinished input first, then open a fresh Undo preview.',true);return;
+    }
+    const generation=inv.undoPreviewGeneration=(inv.undoPreviewGeneration||0)+1;
+    const sequence=inv.sequence,revision=inv.draft_revision;
+    inv.undoPreview=null;
+    if(box)box.replaceChildren(el('p','small','Loading read-only Undo preview…'),button('Cancel preview',()=>cancelUndoPreview(inv)));
+    const data=await api(`/api/businesses/${id}/investigation/undo-preview`);
+    if(S.investigation!==inv||S.detail?.id!==id||generation!==inv.undoPreviewGeneration)return;
+    if(inv.sequence!==sequence||inv.draft_revision!==revision||inv.saving||S.advancedDirty){inv.undoPreview=null;if(box)box.replaceChildren(el('p','callout warning','Input changed. This preview is invalid. Save your draft and open a fresh preview.'),button('Load fresh preview',()=>openUndoPreview()),button('Cancel preview',()=>cancelUndoPreview(inv)));notice('Input changed while loading Undo. Save it and open a fresh preview.',true);return;}
+    if(data.business_id!==id)throw new Error('Undo preview belongs to another business. Open a fresh preview.');
+    inv.undoPreview={...data,localSequence:sequence,localDraftRevision:revision,keepNewer:false};
+    if(box)renderUndoPreview(inv,box);
+  }
+  function renderUndoPreview(inv,box) {
+    const p=inv.undoPreview;box.replaceChildren();if(!p)return;box.hidden=false;
+    const title=el('h3','','Preview Undo');title.tabIndex=-1;
+    append(box,title,el('p','small','Read-only comparison. Cancel leaves saved reviews and unfinished work unchanged.'));
+    if(!p.eligible){append(box,el('p','callout warning',p.reason||'This save is no longer eligible for Undo.'),button('Cancel preview',()=>cancelUndoPreview(inv)));title.focus();return;}
+    append(box,el('p','small',`Latest eligible save · ${Object.keys(p.submitted_questions||{}).length} question(s)`));
+    if(p.before_context_unknown)append(box,el('p','callout warning','Previous saved-review context is unknown. No evidence basis or date is inferred.'));
+    if(p.session_source_revision!==p.source_revision)append(box,el('p','callout warning','Source evidence changed since this save. Undo does not accept the updated source evidence.'));
+    if(p.current_draft_context?.source_changed)append(box,el('p','callout warning','Current unfinished input has changed source context. Keeping it does not accept updated source evidence.'));
+    if(p.current_draft_context?.review_changed)append(box,el('p','callout warning','Current unfinished input has changed saved-review context. Undo does not resolve its comparison.'));
+    if(p.current_draft_context?.review_context_unknown)append(box,el('p','callout warning','Current unfinished input has unknown saved-review context. Its original baseline remains unknown.'));
+    for(const key of Object.keys(p.submitted_questions||{}))append(box,el('h4','section-gap',questionLabels[key]),append(el('div','comparison-grid'),comparisonCard('Current effective saved answer',key,p.current_saved_answers?.[key]),comparisonCard('Previous effective answer to restore',key,p.before_saved_answers?.[key]),comparisonCard('Session answer · unfinished after Undo unless newer input is kept',key,p.submitted_questions[key],true)));
+    for(const key of Object.keys(p.retained_draft_questions||{})){
+      const context=p.current_draft_context?.draft_conflicts?.[key];
+      append(box,el('h4','section-gap',`${questionLabels[key]} · ${p.overlap_questions.includes(key)?'overlapping newer input':'unrelated unfinished input retained'}`),comparisonCard('Current unfinished answer to keep',key,p.retained_draft_questions[key],true),el('p','small',context?.unknown?'Saved-review baseline unknown':context?.changed?'Saved-review context changed; comparison remains required':'Original draft context retained'));
+    }
+    const confirm=button('Confirm Undo',e=>busy(e.currentTarget,()=>undoInvestigation(),'Restoring…'),'primary');
+    confirm.disabled=Boolean(p.overlap_questions.length);
+    if(p.overlap_questions.length){const choice=check(`Keep my newer unfinished input for ${p.overlap_questions.map(q=>questionLabels[q]).join(' · ')} instead of replacing it with the session answers.`,p.keepNewer);choice.input.addEventListener('change',()=>{p.keepNewer=choice.input.checked;confirm.disabled=!p.keepNewer;});append(box,el('p','callout warning','These unfinished answers overlap the saved session. Choose to keep the newer input, or cancel Undo.'),choice.label);}
+    append(box,append(el('div','actions section-gap'),button('Cancel preview',()=>cancelUndoPreview(inv)),confirm));title.focus();
+  }
+
   async function undoInvestigation() {
     if(S.reviewSaving)return;
     const inv=S.investigation,id=S.detail?.id;
     if(!inv?.can_review||!id)return;
     const session=inv.undoPending||inv.latest_session;
     if(!session||(!inv.undoPending&&!session.can_undo))return;
+    const preview=inv.undoPreview;
+    if(!inv.undoPending){
+      if(!preview?.eligible||!preview.preview_token)throw new Error('Open a fresh Undo preview before confirming.');
+      if(inv.sequence!==preview.localSequence||inv.draft_revision!==preview.localDraftRevision||inv.sequence!==inv.savedSequence||inv.saving||S.advancedDirty){invalidateUndoPreview(inv,'Input changed after the Undo preview. Save it and open a fresh preview.');throw new Error('Input changed after the Undo preview. Save it and open a fresh preview.');}
+      if(preview.overlap_questions.length&&!preview.keepNewer)throw new Error('Explicitly keep your newer overlapping input or cancel Undo.');
+    }
     const current=()=>S.investigation===inv&&S.detail?.id===id;
-    // Cancel older detail reads and lock the entire transition, including its
-    // initial draft flush and dependent reads. A queued event is still retained.
+    // Cancel older detail reads and lock the mutation and dependent reads.
+    // Confirmation never saves a draft; a queued input event is still retained.
     detailSerial++;
     S.reviewSaving=true;
     const locked=Array.from(document.querySelectorAll('.investigation input,.investigation select,.investigation textarea,.investigation button')).filter(node=>!node.disabled);
@@ -844,17 +921,15 @@
         if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
         if(!latest.latest_session.undone){
           inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
+          invalidateUndoPreview(inv,'Undo was not recorded. Open a fresh preview before trying again.');
           if(!latest.latest_session.can_undo)throw new Error('The saved review changed. This Undo is no longer available.');
           throw new Error('Undo was not recorded. Your input is retained. Check it before trying Undo again.');
         }
       }else{
-        await persistDraft();
-        if(!current())return;
-        if(Object.keys(inv.edits).length||S.advancedDirty)throw new Error('Save or discard your unfinished question edits before undoing the last review.');
         sequence=inv.sequence;
         inv.undoPending={session_id:session.session_id,sequence};S.dirty=true;
         clearTimeout(draftTimer);
-        try{await api(`/api/businesses/${id}/investigation/undo`,{session_id:session.session_id,review_revision:inv.review_revision});}
+        try{await api(`/api/businesses/${id}/investigation/undo`,{session_id:preview.session_id,review_revision:preview.review_revision,preview_token:preview.preview_token,draft_revision:preview.draft_revision,source_revision:preview.source_revision,keep_questions:preview.overlap_questions});}
         catch(error){mutationError=error;}
         if(!current())return;
         latest=await deskSnapshot(id);
@@ -862,6 +937,7 @@
         if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
         if(!latest.latest_session.undone){
           inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
+          invalidateUndoPreview(inv,'Undo was not recorded. Open a fresh preview before trying again.');
           throw mutationError||new Error('Undo was not recorded. Your input is retained.');
         }
       }
@@ -878,7 +954,7 @@
       inv.undoRestored=true;
       S.detail=latest.business;setupInvestigation(latest);
       render();focusDesk();
-      notice(summaryError?'Last save undone and restored draft saved. Workspace summary could not refresh: '+summaryError.message:'Last save undone. Submitted answers are restored as an editable local draft; history and durable exclusions remain.',Boolean(summaryError));
+      notice(summaryError?'Last save undone and restored draft saved. Workspace summary could not refresh: '+summaryError.message:'Last save undone. Previous decisions and retained unfinished work are shown separately; history and durable exclusions remain.',Boolean(summaryError));
     }catch(error){
       if(current()){
         if(inv.undoPending){S.dirty=true;error=new Error('Undo outcome is not confirmed. Your input is retained here. Check Undo outcome before retrying or closing. '+error.message);}

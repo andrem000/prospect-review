@@ -400,17 +400,19 @@ class Application:
             if method == 'POST' and rid:
                 return research.dismiss(db, bid, rid, data, business)
             raise LookupError('Route not found')
-        investigation_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/(investigation(?:/undo)?|draft)', path)
+        investigation_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/(investigation(?:/undo(?:-preview)?)?|draft)', path)
         if investigation_route:
             bid, operation = int(investigation_route[1]), investigation_route[2]
             if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
                 raise LookupError('Business not found')
-            if method == 'GET' and operation == 'investigation':
+            if method == 'GET' and operation in ('investigation', 'investigation/undo-preview'):
                 # Details and revision tokens describe exactly one evidence
                 # snapshot, even when another server/CLI writes during this GET.
                 # Never combine old displayed details with a newer save token.
                 with closing(_memory(db)) as snapshot:
                     business = next(b for b in self.evaluated(snapshot) if b['id'] == bid)
+                    if operation == 'investigation/undo-preview':
+                        return investigation.undo_preview(snapshot, bid, business)
                     return {**investigation.read(snapshot, bid, business), 'business': business,
                             'evidence': evidence.read(snapshot, business, self.config())}
             business = next(b for b in self.evaluated(db) if b['id'] == bid)

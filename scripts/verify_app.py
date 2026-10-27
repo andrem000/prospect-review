@@ -237,6 +237,33 @@ def verify():
             resumed = request(base + '/investigation')
             assert resumed['draft']['questions'] == {'fit': fit} and resumed['review_changed']
             assert next(item for item in request('/api/drafts')['items'] if item['id'] == record['id'])['questions'] == ['fit']
+            # Preview is read-only; Undo keeps unrelated unfinished fit work.
+            before_preview = persisted_review_state()
+            preview = request(base + '/investigation/undo-preview')
+            assert preview['eligible'] and preview['unrelated_questions'] == ['fit']
+            assert preview['overlap_questions'] == []
+            assert preview['retained_draft_questions'] == {'fit': fit}
+            assert request(base + '/investigation/undo-preview') == preview
+            assert persisted_review_state() == before_preview
+            undone = request(base + '/investigation/undo', {
+                'session_id': preview['session_id'], 'review_revision': preview['review_revision'],
+                'draft_revision': preview['draft_revision'], 'source_revision': preview['source_revision'],
+                'preview_token': preview['preview_token'], 'keep_questions': []})
+            assert undone['undo_result']['retained_questions'] == ['fit']
+            assert undone['undo_result']['session_restored_questions'] == ['website']
+            restored = request(base + '/investigation')
+            assert restored['draft']['questions']['fit'] == fit
+            assert restored['draft']['questions']['website'] == partial_payload['questions']['website']
+            assert restored['draft_review_revisions']['fit'] == old_fit_revision
+            assert restored['latest_session']['undone']
+            assert restored['latest_session']['undo_result'] == undone['undo_result']
+            server.shutdown(); server.server_close(); thread.join(timeout=10)
+            server = create_server(workspace, port=0)
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            token = server.app.token
+            after_undo_restart = request(base + '/investigation')
+            assert after_undo_restart['draft'] == restored['draft']
+            assert after_undo_restart['latest_session']['undo_result'] == undone['undo_result']
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -252,7 +279,10 @@ def verify():
                     'installed_latest_import_and_retained_signal_explanation': True,
                     'installed_unfinished_worklist_read_only': True,
                     'installed_question_resolution_keeps_other_contexts': True,
-                    'installed_partial_draft_restart': True}
+                    'installed_partial_draft_restart': True,
+                    'installed_undo_preview_read_only': True,
+                    'installed_undo_preserves_unrelated_context': True,
+                    'installed_undo_result_restart': True}
         finally:
             server.shutdown()
             server.server_close()

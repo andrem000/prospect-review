@@ -33,9 +33,9 @@ function harness(){
   const context={document,window:{addEventListener:(k,fn)=>events[k]=fn},fetch,Node:Element,URL,URLSearchParams,crypto,setTimeout:()=>1,clearTimeout(){},queueMicrotask(){},console};
   vm.createContext(context);
   let source=fs.readFileSync(path.join(testDirectory,'../prospect/web/app.js'),'utf8');
-  source=source.replace(/^  state\(\)\.then\(render\).*$/m,'').replace(/\}\)\(\);\s*$/,'globalThis.ui={S,setupInvestigation,renderQuestion,undoInvestigation,persistDraft,guard,openDetail};\n})();');
+  source=source.replace(/^  state\(\)\.then\(render\).*$/m,'').replace(/\}\)\(\);\s*$/,'globalThis.ui={S,setupInvestigation,renderQuestion,undoInvestigation,persistDraft,guard,openDetail,openUndoPreview,cancelUndoPreview,renderUndoPreview,renderInvestigation,undoResultSummary};\n})();');
   vm.runInContext(source,context);
-  const ui=context.ui;ui.S.state={counts:{}};ui.S.detail=copy(snapshot.business);ui.setupInvestigation(copy(snapshot));
+  const ui=context.ui;ui.S.state={counts:{}};ui.S.detail=copy(snapshot.business);ui.setupInvestigation(copy(snapshot));ui.S.investigation.undoPreview={eligible:true,preview_token:"fixture-token",session_id:"session-1",review_revision:1,draft_revision:0,source_revision:"source",overlap_questions:[],localSequence:0,localDraftRevision:0};
   const form=ui.renderQuestion(ui.S.detail,'website');root.append(form);const notes=form.querySelectorAll().find(n=>n.tagName==='textarea');
   return {ui,server,calls,notes,root,nodes,events,response,applyUndo};
 }
@@ -82,7 +82,7 @@ test('failed reconciliation then confirmed untouched session requires explicit n
   const h=harness();h.server.override=r=>r.endsWith('/undo')?Promise.reject(Error('Offline')):r.endsWith('/investigation')?Promise.reject(Error('Offline')):null;
   await assert.rejects(h.ui.undoInvestigation(),/not confirmed/);h.server.override=null;
   await assert.rejects(h.ui.undoInvestigation(),/not recorded/);assert.equal(mutations(h).length,1);assert.equal(h.ui.S.dirty,false);
-  await h.ui.undoInvestigation();assert.equal(mutations(h).length,2);assert.equal(h.ui.S.investigation.latest_session.undone,true);
+  h.ui.S.investigation.undoPreview={eligible:true,preview_token:"fixture-token",session_id:"session-1",review_revision:1,draft_revision:0,source_revision:"source",overlap_questions:[],localSequence:0,localDraftRevision:0};await h.ui.undoInvestigation();assert.equal(mutations(h).length,2);assert.equal(h.ui.S.investigation.latest_session.undone,true);
 });
 test('late old-business read never replaces newer business or input',async()=>{
   const h=harness(),read=deferred();h.server.override=r=>r.endsWith('/investigation')?read.promise:null;
@@ -96,7 +96,7 @@ test('in-flight detail navigation started before Undo cannot supersede locked de
   h.applyUndo();post.resolve(h.response({}));await undo;assert.equal(h.ui.S.detail.id,1);
 });
 test('existing drafts and contact-held business never issue Undo',async()=>{
-  const h=harness();type(h);await assert.rejects(h.ui.undoInvestigation(),/unfinished/);assert.equal(mutations(h).length,0);assert.equal(h.server.snapshot.draft.questions.website.notes,'Raced text');
+  const h=harness();type(h);await assert.rejects(h.ui.undoInvestigation(),/Input changed/);assert.equal(mutations(h).length,0);assert.equal(writes(h).length,0);
   h.ui.S.investigation.can_review=false;await h.ui.undoInvestigation();assert.equal(mutations(h).length,0);
 });
 
@@ -116,7 +116,7 @@ test('workspace summary failure reports Undo success truthfully and shows restor
   const h=harness();h.server.override=r=>r==='/api/state'?Promise.reject(Error('Summary failed')):null;
   await h.ui.undoInvestigation();assert.equal(h.ui.S.investigation.edits.website.notes,answer.notes);assert.equal(h.ui.S.dirty,false);assert.match(h.nodes.get('#notice').textContent,/Last save undone.*summary could not refresh/);assert.equal(h.ui.S.reviewSaving,false);
 });
-test('initial draft flush failure releases controls and prevents mutation',async()=>{
+test('unsaved input blocks confirmation without implicitly saving',async()=>{
   const h=harness();type(h);h.server.override=r=>r.endsWith('/draft')?Promise.reject(Error('Draft failed')):null;
-  await assert.rejects(h.ui.undoInvestigation(),/Draft failed/);assert.equal(mutations(h).length,0);assert.equal(h.notes.disabled,false);assert.equal(h.ui.S.investigation.edits.website.notes,'Raced text');assert.equal(h.ui.S.dirty,true);
+  await assert.rejects(h.ui.undoInvestigation(),/Input changed/);assert.equal(mutations(h).length,0);assert.equal(writes(h).length,0);assert.equal(h.notes.disabled,false);assert.equal(h.ui.S.investigation.edits.website.notes,'Raced text');assert.equal(h.ui.S.dirty,true);
 });
