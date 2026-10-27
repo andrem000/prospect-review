@@ -406,6 +406,13 @@ class Application:
             if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
                 raise LookupError('Business not found')
             if method == 'GET' and operation in ('investigation', 'investigation/undo-preview'):
+                undo_session_id = None
+                if operation == 'investigation' and 'undo_session_id' in query:
+                    values = query['undo_session_id']
+                    if (len(values) != 1 or not values[0].strip() or len(values[0]) > 128
+                            or '\x00' in values[0]):
+                        raise ValueError('undo_session_id must be one nonempty value of at most 128 characters without NUL')
+                    undo_session_id = values[0]
                 # Details and revision tokens describe exactly one evidence
                 # snapshot, even when another server/CLI writes during this GET.
                 # Never combine old displayed details with a newer save token.
@@ -413,7 +420,8 @@ class Application:
                     business = next(b for b in self.evaluated(snapshot) if b['id'] == bid)
                     if operation == 'investigation/undo-preview':
                         return investigation.undo_preview(snapshot, bid, business)
-                    return {**investigation.read(snapshot, bid, business), 'business': business,
+                    outcome = {'undo_session_id': undo_session_id} if undo_session_id is not None else {}
+                    return {**investigation.read(snapshot, bid, business, **outcome), 'business': business,
                             'evidence': evidence.read(snapshot, business, self.config())}
             business = next(b for b in self.evaluated(db) if b['id'] == bid)
             if method == 'POST':
@@ -602,7 +610,11 @@ class Handler(BaseHTTPRequestHandler):
                             raise LookupError('Export not found')
                         entry = json.loads(row[0])
                         return self.reply(200, (app.root / 'exports' / download[1] / 'bundle.zip').read_bytes(), 'application/zip', entry['filename'])
-                    result = app.dispatch(method, path, parse_qs(parsed.query, max_num_fields=30), data, db)
+                    # Preserve empty outcome values so the route can reject them;
+                    # other endpoints retain their existing query semantics.
+                    outcome_query = method == 'GET' and re.fullmatch(r'/api/businesses/[1-9][0-9]*/investigation', path)
+                    query = parse_qs(parsed.query, max_num_fields=30, keep_blank_values=bool(outcome_query))
+                    result = app.dispatch(method, path, query, data, db)
                 return self.reply(200, _json(result))
             if method != 'GET':
                 raise LookupError('Route not found')

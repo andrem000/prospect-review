@@ -274,7 +274,7 @@ def check_revisions(db, bid, data, with_draft=True):
     return draft_revision, draft, questions
 
 
-def read(db, bid, business):
+def read(db, bid, business, undo_session_id=None):
     current = revision(db, bid)
     draft_revision, draft, questions = state(db, bid)
     row = db.execute('SELECT * FROM investigation_sessions WHERE business_id=? ORDER BY rowid DESC LIMIT 1', (bid,)).fetchone()
@@ -285,9 +285,22 @@ def read(db, bid, business):
                       can_undo=not row['undone'] and row['final_revision'] == current,
                       undo_result=json.loads(row['undo_result'])['undo_result'] if row['undo_result'] else None)
     saved = review_state.saved_answers(business)
-    return dict(review_revision=current, draft_revision=draft_revision, **draft_context(db, bid, business),
+    result = dict(review_revision=current, draft_revision=draft_revision, **draft_context(db, bid, business),
                 questions=review_state.editor_questions(saved), question_history=questions, saved_answers=saved,
                 can_review='suppressed_or_contacted' not in business['excluded_reasons'], latest_session=latest)
+    if undo_session_id is not None:
+        # The receipt describes this operation only; current answers and draft
+        # above must always describe the caller's same, current snapshot.
+        requested = db.execute('SELECT * FROM investigation_sessions WHERE business_id=? AND session_id=?',
+                               (bid, undo_session_id)).fetchone()
+        result['undo_outcome'] = dict(
+            session_id=undo_session_id, found=requested is not None,
+            undone=bool(requested['undone']) if requested else None,
+            undo_result=json.loads(requested['undo_result'])['undo_result'] if requested and requested['undo_result'] else None,
+            can_undo=bool(requested and row and requested['session_id'] == row['session_id']
+                          and not requested['undone'] and requested['final_revision'] == current
+                          and not contact_excluded(db, bid)))
+    return result
 
 
 def save_draft(db, bid, data):

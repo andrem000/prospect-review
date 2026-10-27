@@ -264,6 +264,30 @@ def verify():
             after_undo_restart = request(base + '/investigation')
             assert after_undo_restart['draft'] == restored['draft']
             assert after_undo_restart['latest_session']['undo_result'] == undone['undo_result']
+            # Resolve a completed operation independently of a later save.
+            newer_session = request(base + '/investigation', {
+                'review_revision': after_undo_restart['review_revision'],
+                'draft_revision': after_undo_restart['draft_revision'],
+                'source_revision': after_undo_restart['source_revision'],
+                'request_id': 'installed-after-undo-save', 'questions': {'activity': questions['activity']}})
+            before_outcome = persisted_review_state()
+            outcome_path = base + '/investigation?undo_session_id=' + preview['session_id']
+            outcome = request(outcome_path)
+            assert outcome['undo_outcome']['session_id'] == preview['session_id']
+            assert outcome['undo_outcome']['found'] and outcome['undo_outcome']['undone']
+            assert outcome['undo_outcome']['undo_result'] == undone['undo_result']
+            assert not outcome['undo_outcome']['can_undo']
+            assert outcome['latest_session']['session_id'] == newer_session['session_id']
+            assert outcome['draft']['questions']['fit'] == fit
+            assert request(outcome_path) == outcome and persisted_review_state() == before_outcome
+            with closing(sqlite3.connect(server.app.dbpath)) as db:
+                with db:
+                    db.execute('INSERT INTO suppressions VALUES(?,?,?)',
+                               ('business_id', str(record['id']), 'SIMULATED outcome hold'))
+            held_outcome = request(outcome_path)
+            assert not held_outcome['can_review']
+            assert held_outcome['undo_outcome']['undone']
+            assert held_outcome['draft'] == outcome['draft']
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -282,7 +306,9 @@ def verify():
                     'installed_partial_draft_restart': True,
                     'installed_undo_preview_read_only': True,
                     'installed_undo_preserves_unrelated_context': True,
-                    'installed_undo_result_restart': True}
+                    'installed_undo_result_restart': True,
+                    'installed_undo_outcome_after_newer_session': True,
+                    'installed_undo_outcome_read_only_and_held': True}
         finally:
             server.shutdown()
             server.server_close()

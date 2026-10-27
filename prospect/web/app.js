@@ -24,7 +24,7 @@
   function heading(title, subtitle, actions) {return append(el('div','page-heading'),append(el('div'),el('p','eyebrow','PROSPECT REVIEW'),el('h1','',title),el('p','subtitle',subtitle)),actions);}
   function panel(title, body, extra) {const p=el('section','panel');if(title)append(p,append(el('div','panel-heading'),el('h2','',title),extra));append(p,append(el('div','panel-body'),body));return p;}
   function jsonDetails(title,value) {const d=el('details');append(d,el('summary','',title),el('pre','',JSON.stringify(value,null,2)));return d;}
-  function guard(fn) { if(S.investigation && !S.advancedDirty){
+  function guard(fn) { if(S.investigation && !S.advancedDirty && (S.investigation.can_review || !S.dirty)){
     if(S.reviewSaving || S.navigating){notice('Your work is saving. Please wait.');return;}
     S.navigating=true;
     const locked=Array.from(document.querySelectorAll('.investigation input,.investigation select,.investigation textarea,.investigation button')).filter(node=>!node.disabled);
@@ -140,8 +140,9 @@
     if(!data.records.length){append(target,append(el('div','empty'),el('h2','','No matching businesses'),el('p','','Try another search or broaden the queue filters.'),button('Reset filters',()=>guard(()=>{S.filters={q:'',state:'',trade:'',review:'all',website:'',queue:'candidates',sort:'score'};S.offset=0;render();}))));return;}
     const table=el('table'),head=el('thead'),hr=el('tr');const all=input('checkbox');all.setAttribute('aria-label','Select this page');all.checked=data.records.every(r=>S.selected.has(r.id));all.addEventListener('change',()=>{data.records.forEach(r=>all.checked?S.selected.add(r.id):S.selected.delete(r.id));renderRows(target,data);});append(hr,append(el('th'),all),el('th','','Business'),el('th','','Priority'),el('th','','Review'));append(head,hr);append(table,head);const body=el('tbody');for(const r of data.records){const tr=el('tr',S.detail?.id===r.id?'selected':'');const c=input('checkbox');c.setAttribute('aria-label',`Select ${r.name}`);c.checked=S.selected.has(r.id);c.addEventListener('change',()=>{c.checked?S.selected.add(r.id):S.selected.delete(r.id);renderRows(target,data);});const name=append(el('td'),button(r.name,()=>guard(()=>openDetail(r.id)),'record-name'),el('small','',[r.city,r.state].filter(Boolean).join(', ')),el('small','',listValue(r.trades)));const status=r.qualified?'Qualified':human(r.verification_status);append(tr,append(el('td'),c),name,append(el('td'),el('span','score',r.score),el('small','',human(r.website_signal))),append(el('td'),el('span',`pill ${r.excluded_reasons?.length?'danger':r.review_history_count?'':'muted'}`,status),el('small','',human(r.queue_status))));append(body,tr);}append(table,body);append(target,append(el('div','table-wrap'),table));const footer=el('div','table-footer');const previous=button('← Previous',()=>{S.offset=Math.max(0,S.offset-S.limit);loadList(target.closest('.queue-panel'));});previous.disabled=S.offset===0;const next=button('Next →',()=>{S.offset+=S.limit;loadList(target.closest('.queue-panel'));});next.disabled=S.offset+S.limit>=data.total;append(footer,el('span','',`${S.offset+1}–${Math.min(S.offset+S.limit,data.total)} of ${data.total} results`),append(el('div','actions'),previous,next),S.detail?null:button('Export all filtered',()=>exportPrompt(data.matching_ids)));append(target,footer);
   }
-  async function deskSnapshot(id) {
-    const investigation=await api(`/api/businesses/${id}/investigation`);
+  async function deskSnapshot(id,undoSessionId) {
+    const query=undoSessionId===undefined?'':`?undo_session_id=${encodeURIComponent(undoSessionId)}`;
+    const investigation=await api(`/api/businesses/${id}/investigation${query}`);
     if(!investigation.business||investigation.business.id!==id)throw new Error('The investigation snapshot is incomplete. Reload the application before reviewing.');
     return investigation;
   }
@@ -166,9 +167,9 @@
     const evidence=el('div','detail-section');append(evidence,el('h3','','Source evidence'));for(const [title,values] of [['Websites',b.websites],['Social profiles',b.socials],['Phones',b.phones]]){if(values?.length){append(evidence,el('p','small',title));const ul=el('ul');values.forEach(v=>append(ul,append(el('li'),title==='Phones'?el('span','',v):link(v))));append(evidence,ul);}}if(b.source_url)append(evidence,link(b.source_url,'Open source listing ↗'));append(evidence,jsonDetails(`Original observations (${b.observations?.length||0})`,b.observations||[]));append(p,evidence,reviewForm(b));
     const history=el('div','detail-section');append(history,el('h3','',`Review history · ${b.reviews?.length||0}`));if(!b.reviews?.length)append(history,el('p','','No review recorded. Imported data has not been manually verified.'));for(const r of [...(b.reviews||[])].reverse()){const entry=el('article','history-entry');append(entry,el('time','',`Recorded ${dateText(r.created_at)}`),el('p','',`${human(r.website_status)} · ${human(r.activity)} · ${human(r.disposition)}`),el('p','small',`Evidence observed: ${dateText(r.evidence_observed_at)}`),el('p','',r.notes||''),r.evidence_url?link(r.evidence_url,'Review evidence ↗'):null,jsonDetails('Effective saved decision',r));append(history,entry);}append(p,history);return p;
   }
-  function reviewForm(b) {const section=el('section','detail-section');append(section,el('h3','','Record a review'),el('p','','Change the decisions you checked. Evidence dates must reflect when the evidence was observed.'));const form=el('form'),grid=el('div','form-grid section-gap'),controls={},base=b.review||{};const defaults={website_status:'unreviewed',activity:'unknown',ownership:'unknown',residential:'unknown',service_fit:'unknown',delivery:'unknown',disposition:'pending',queue_hold:false,evidence_observed_at:null};const defs=[['website_status','Website decision',['unreviewed','no_site_found','site_found','uncertain']],['activity','Business activity',['unknown','active','closed']],['ownership','Ownership',['unknown','independent','chain']],['residential','Residential service',['unknown','yes','no']],['service_fit','Service fit',['unknown','yes','no']],['delivery','Delivery model',['unknown','mobile','fixed']],['disposition','Disposition',['pending','rejected','contacted']]];
+  function reviewForm(b) {const section=el('section','detail-section');append(section,el('h3','','Record a review'),el('p','','Change the decisions you checked. Evidence dates must reflect when the evidence was observed.'));const form=el('form'),grid=el('div','form-grid section-gap'),controls={},retained=S.advancedDirty&&S.investigation?.advancedInput?.business_id===b.id?S.investigation.advancedInput:null,base=retained?.base||b.review||{};const defaults={website_status:'unreviewed',activity:'unknown',ownership:'unknown',residential:'unknown',service_fit:'unknown',delivery:'unknown',disposition:'pending',queue_hold:false,evidence_observed_at:null};const defs=[['website_status','Website decision',['unreviewed','no_site_found','site_found','uncertain']],['activity','Business activity',['unknown','active','closed']],['ownership','Ownership',['unknown','independent','chain']],['residential','Residential service',['unknown','yes','no']],['service_fit','Service fit',['unknown','yes','no']],['delivery','Delivery model',['unknown','mobile','fixed']],['disposition','Disposition',['pending','rejected','contacted']]];
     defs.forEach(([key,label,options])=>{const n=select(options,base[key]??defaults[key]);controls[key]=n;append(grid,field(label,n));});for(const [key,label,type] of [['verified_website','Confirmed website','url'],['candidate_website','Candidate website','url'],['evidence_observed_at','Evidence observed on','date'],['evidence_url','Evidence URL','url']]){const n=input(type,base[key]||'',key==='evidence_url');controls[key]=n;if(type==='date')n.max=new Date().toISOString().slice(0,10);append(grid,field(label,n,key==='evidence_observed_at'?'Use the observation date; never a guessed date.':undefined));}const notes=el('textarea');notes.value=base.notes||'';notes.required=true;controls.notes=notes;const nf=field('Evidence notes',notes,'Describe what you checked and the basis for these decisions.');nf.classList.add('span-2');append(grid,nf);
-    const hold=check('Keep this business on hold',Boolean(base.queue_hold));controls.queue_hold=hold.input;const activityCheck=check('Record a new activity check using this evidence');const contactCheck=check('I acknowledge that “contacted” adds a durable contact exclusion.');append(form,grid,el('div','section-gap'),hold.label,el('div','section-gap'),activityCheck.label,el('p','small','Existing activity evidence is retained unless activity changes or this box is checked.'),el('div','section-gap'),contactCheck.label);const error=el('p','inline-error');error.setAttribute('role','alert');const save=el('button','primary','Save review');save.type='submit';append(form,append(el('div','form-actions'),save,button('Reset edits',()=>guard(()=>{S.dirty=false;render();}))),error);form.addEventListener('input',()=>{S.dirty=true;S.advancedDirty=true;});form.addEventListener('change',()=>{S.dirty=true;S.advancedDirty=true;});form.addEventListener('submit',async e=>{e.preventDefault();if(S.reviewSaving)return;if(S.investigation?.source_changed){error.textContent='Review updated source evidence before saving. Your edits are retained.';return;}error.textContent='';const changes={};for(const [key,n] of Object.entries(controls)){const value=n.type==='checkbox'?n.checked:n.value;const previous=base[key]??defaults[key]??'';if(value!==previous&&!(key==='evidence_observed_at'&&!value&&previous===null))changes[key]=key==='evidence_observed_at'?(value||null):value;}
+    const hold=check('Keep this business on hold',Boolean(base.queue_hold));controls.queue_hold=hold.input;const activityCheck=check('Record a new activity check using this evidence');const contactCheck=check('I acknowledge that “contacted” adds a durable contact exclusion.');append(form,grid,el('div','section-gap'),hold.label,el('div','section-gap'),activityCheck.label,el('p','small','Existing activity evidence is retained unless activity changes or this box is checked.'),el('div','section-gap'),contactCheck.label);const error=el('p','inline-error');error.setAttribute('role','alert');const save=el('button','primary','Save review');save.type='submit';append(form,append(el('div','form-actions'),save,button('Reset edits',()=>guard(()=>{S.dirty=false;render();}))),error);if(retained){for(const [key,n] of Object.entries(controls)){if(n.type==='checkbox')n.checked=retained.values[key];else n.value=retained.values[key];}activityCheck.input.checked=retained.activityCheck;contactCheck.input.checked=retained.contactCheck;}const remember=()=>{if(S.detail?.id!==b.id)return;S.dirty=true;S.advancedDirty=true;if(S.investigation)S.investigation.advancedInput={business_id:b.id,base:copy(base),values:Object.fromEntries(Object.entries(controls).map(([key,n])=>[key,n.type==='checkbox'?n.checked:n.value])),activityCheck:activityCheck.input.checked,contactCheck:contactCheck.input.checked};};form.addEventListener('input',remember);form.addEventListener('change',remember);form.addEventListener('submit',async e=>{e.preventDefault();if(S.reviewSaving||S.detail?.id!==b.id)return;if(S.investigation?.undoPending){error.textContent='Check Undo outcome before saving advanced edits. Your input is retained.';return;}if(S.investigation&&!S.investigation.can_review){error.textContent='This business is read-only. Your input is retained here.';return;}if(S.investigation?.source_changed){error.textContent='Review updated source evidence before saving. Your edits are retained.';return;}error.textContent='';const changes={};for(const [key,n] of Object.entries(controls)){const value=n.type==='checkbox'?n.checked:n.value;const previous=base[key]??defaults[key]??'';if(value!==previous&&!(key==='evidence_observed_at'&&!value&&previous===null))changes[key]=key==='evidence_observed_at'?(value||null):value;}
       if(activityCheck.input.checked)changes.activity=controls.activity.value;if('activity' in changes)changes.evidence_observed_at=controls.evidence_observed_at.value||null;if(controls.disposition.value==='contacted'&&!contactCheck.input.checked){error.textContent='Acknowledge the durable contact exclusion before saving.';return;}if(!Object.keys(changes).length){error.textContent='No changes to save. Select a new activity check only when you have checked fresh activity evidence.';return;}changes.evidence_url=controls.evidence_url.value;changes.notes=controls.notes.value;if(('activity'in changes)&&controls.activity.value==='active'&&!controls.evidence_observed_at.value){error.textContent='An active activity check needs an explicit evidence observation date.';return;}S.reviewSaving=true;const locked=Array.from((form.closest('.investigation')||form).querySelectorAll('input,select,textarea,button')).filter(n=>n!==save&&!n.disabled);locked.forEach(n=>{n.disabled=true;});try{await busy(save,async()=>{await persistDraft().catch(error=>{showDeskError(error);throw error;});await api(`/api/businesses/${b.id}/review`,{changes,replace:false,source_revision:S.investigation?.source_revision,review_revision:S.investigation?.review_revision});S.dirty=false;await state();const latest=await deskSnapshot(b.id);S.detail=latest.business;S.advancedDirty=false;setupInvestigation(latest);notice('Review saved. Decisions and their evidence are recorded in history.');render();},'Saving…');}finally{S.reviewSaving=false;locked.forEach(n=>{n.disabled=false;});}});append(section,form);return section;
   }
   const questionOrder = ['identity', 'website', 'activity', 'fit'];
@@ -396,8 +397,9 @@
 
   async function persistDraft() {
     const inv=S.investigation;
-    if(!inv || !S.detail || !inv.can_review)return;
+    if(!inv || !S.detail)return;
     if(inv.undoPending)throw new Error('Undo outcome is not confirmed. Check Undo again before saving or leaving this work.');
+    if(!inv.can_review)return;
     if(inv.saving)return inv.saving;
     if(inv.sequence===inv.savedSequence)return;
     if(inv.conflict)throw new Error('Another review or draft changed. Resolve the conflict below before continuing.');
@@ -453,16 +455,17 @@
           if(latest.source_revision!==undefined&&latest.source_revision!==inv.source_revision&&latest.review_revision===inv.review_revision&&latest.draft_revision===inv.draft_revision){S.detail=latest.business;refreshEvidenceModel(inv,latest);inv.source_changed=true;inv.current_source_revision=latest.source_revision;inv.conflict=false;inv.error=null;inv.request=null;render();focusDesk();return;}
           box.replaceChildren(el('p','callout warning','Compare before replacing unfinished input. No answers have been submitted.'));
           for(const key of questionOrder.filter(q=>inv.edits[q]||latest.draft?.questions?.[q]))append(box,el('h4','',questionLabels[key]),append(el('div','comparison-grid'),comparisonCard('Current saved answer',key,latest.saved_answers?.[key]),comparisonCard('Saved unfinished input',key,latest.draft?.questions?.[key],true),comparisonCard('Your retained input',key,inv.edits[key],true)));
-          append(box,button('Keep my answers as the draft',async()=>{
+          append(box,latest.can_review?button('Keep my answers as the draft',async()=>{
             S.detail=latest.business;inv.review_revision=latest.review_revision;inv.draft_revision=latest.draft_revision;
             inv.source_changed=latest.source_revision!==inv.source_revision;inv.current_source_revision=latest.source_revision;
             refreshEvidenceModel(inv,latest);
             // Updating transport tokens preserves each question's durable
             // baseline. Resolution belongs to its visible comparison controls.
             inv.draft_conflicts=latest.draft_conflicts;inv.review_changed=latest.review_changed;
+            if(inv.undoRetainedQuestions)inv.edits={...copy(latest.draft?.questions||{}),...Object.fromEntries(inv.undoRetainedQuestions.filter(key=>inv.edits[key]).map(key=>[key,copy(inv.edits[key])]))};
             inv.conflict=false;inv.error=null;inv.sequence++;inv.request=null;
             try {await persistDraft();resolveDeskNotice('Conflict resolved. Your answers are saved as the local draft.');render();focusDesk();}catch(e){showDeskError(e);}
-          }),button('Use newer saved work',()=>{
+          }):null,button('Use newer saved work',()=>{
             pendingNavigation=()=>{if(S.investigation!==inv)return;S.detail=latest.business;setupInvestigation(latest);resolveDeskNotice('The saved draft is loaded. Review context is shown for each question.');render();focusDesk();};
             $('#confirm-title').textContent='Replace your local unfinished input?';$('#confirm-dialog p').textContent='The saved draft shown in this comparison will replace your local question edits. Saved review history remains unchanged.';$('#discard-editing').textContent='Replace local input with saved draft';$('#confirm-dialog').showModal();
           }));
@@ -542,6 +545,7 @@
     if(inv.latest_session?.undone&&inv.latest_session.undo_result)append(desk,undoResultSummary(inv.latest_session.undo_result));
     const advanced=el('details','advanced-review');
     append(advanced,el('summary','','Advanced review & full history'));
+    if(!inv.can_review&&S.advancedDirty&&inv.advancedInput)append(advanced,el('p','callout warning','Unsaved advanced edits retained read-only. Contact exclusion prevents saving these values.'),jsonDetails('Your retained advanced input',inv.advancedInput.values));
     if(inv.can_review)append(advanced,el('p','callout','Advanced controls include hold and disposition. Unfinished desk answers remain saved separately.'),reviewForm(b));
     append(advanced,jsonDetails('Current evaluated record',b.review||{}),jsonDetails('All review history',b.reviews||[]),jsonDetails('Assessment and score details',{score:b.score_breakdown,website:b.website_assessment,activity:b.activity_assessment,scope:b.scope_assessment}));
     append(desk,advanced);
@@ -714,6 +718,7 @@
         return;
       }
       inv.edits[key]=copy(entry);
+      if(inv.undoRetainedQuestions&&!inv.undoRetainedQuestions.includes(key))inv.undoRetainedQuestions.push(key);
       changedDraft();
     };
     questionFields[key].forEach(([name,label,options])=>{
@@ -847,8 +852,9 @@
   }
   async function openUndoPreview() {
     const inv=S.investigation,id=S.detail?.id;
-    if(!inv?.can_review||S.reviewSaving)return;
+    if(!inv||S.reviewSaving)return;
     if(inv.undoPending)return undoInvestigation();
+    if(!inv.can_review)return;
     const box=inv.undoArea;
     if(box)box.hidden=false;
     if(inv.sequence!==inv.savedSequence||inv.saving||S.advancedDirty){
@@ -894,10 +900,10 @@
   async function undoInvestigation() {
     if(S.reviewSaving)return;
     const inv=S.investigation,id=S.detail?.id;
-    if(!inv?.can_review||!id)return;
-    const session=inv.undoPending||inv.latest_session;
-    if(!session||(!inv.undoPending&&!session.can_undo))return;
+    if(!inv||!id||(!inv.undoPending&&!inv.can_review))return;
     const preview=inv.undoPreview;
+    const session=inv.undoPending||preview;
+    if(!session){if(inv.latest_session?.can_undo)throw new Error('Open a fresh Undo preview before confirming.');return;}
     if(!inv.undoPending){
       if(!preview?.eligible||!preview.preview_token)throw new Error('Open a fresh Undo preview before confirming.');
       if(inv.sequence!==preview.localSequence||inv.draft_revision!==preview.localDraftRevision||inv.sequence!==inv.savedSequence||inv.saving||S.advancedDirty){invalidateUndoPreview(inv,'Input changed after the Undo preview. Save it and open a fresh preview.');throw new Error('Input changed after the Undo preview. Save it and open a fresh preview.');}
@@ -913,46 +919,51 @@
     let sequence=inv.undoPending?.sequence??inv.sequence;
     try {
       let latest,mutationError;
-      if(inv.undoPending){
-        // A previous request may have committed despite a lost response. Read
-        // first; only an explicitly untouched matching session may be retried.
-        latest=await deskSnapshot(id);
-        if(!current())return;
-        if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
-        if(!latest.latest_session.undone){
-          inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
-          invalidateUndoPreview(inv,'Undo was not recorded. Open a fresh preview before trying again.');
-          if(!latest.latest_session.can_undo)throw new Error('The saved review changed. This Undo is no longer available.');
-          throw new Error('Undo was not recorded. Your input is retained. Check it before trying Undo again.');
-        }
-      }else{
+      if(!inv.undoPending){
         sequence=inv.sequence;
-        inv.undoPending={session_id:session.session_id,sequence};S.dirty=true;
+        inv.undoPending={session_id:preview.session_id,sequence,edits:copy(inv.edits)};S.dirty=true;
         clearTimeout(draftTimer);
         try{await api(`/api/businesses/${id}/investigation/undo`,{session_id:preview.session_id,review_revision:preview.review_revision,preview_token:preview.preview_token,draft_revision:preview.draft_revision,source_revision:preview.source_revision,keep_questions:preview.overlap_questions});}
         catch(error){mutationError=error;}
         if(!current())return;
-        latest=await deskSnapshot(id);
-        if(!current())return;
-        if(latest.latest_session?.session_id!==session.session_id)throw new Error('Undo outcome cannot be confirmed for this session. Reload saved work before continuing.');
-        if(!latest.latest_session.undone){
-          inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
-          invalidateUndoPreview(inv,'Undo was not recorded. Open a fresh preview before trying again.');
-          throw mutationError||new Error('Undo was not recorded. Your input is retained.');
+      }
+      // Read the confirmed operation; this never retries the mutation.
+      latest=await deskSnapshot(id,session.session_id);
+      if(!current())return;
+      const outcome=latest.undo_outcome;
+      if(outcome?.session_id!==session.session_id||!outcome.found||typeof outcome.undone!=='boolean')throw new Error('The requested session outcome is unavailable. Check Undo outcome again; no retry was sent.');
+      if(!outcome.undone){
+        const pending=inv.undoPending;
+        inv.undoPending=null;S.dirty=inv.sequence!==inv.savedSequence||Boolean(S.advancedDirty);
+        invalidateUndoPreview(inv,outcome.can_undo?'Undo was not recorded. Open a fresh preview before trying again.':'Undo was not recorded and this save is no longer eligible.');
+        const error=mutationError||new Error('Undo was not recorded. Your input is retained. Open a fresh preview only if this save is still eligible.');
+        if(latest.review_revision!==inv.review_revision||latest.draft_revision!==inv.draft_revision||latest.source_revision!==inv.current_source_revision||!latest.can_review){
+          const retained=inv.sequence!==sequence||S.advancedDirty,edits=copy(latest.draft?.questions||{}),keys=[];
+          for(const [key,value] of Object.entries(inv.edits))if(JSON.stringify(value)!==JSON.stringify(pending.edits?.[key])){edits[key]=copy(value);keys.push(key);}
+          const advancedDirty=S.advancedDirty,advancedInput=inv.advancedInput;inv.undoRestored=true;
+          S.detail=latest.business;setupInvestigation(latest);S.advancedDirty=advancedDirty;S.investigation.advancedInput=advancedInput;
+          if(retained){Object.assign(S.investigation,{edits,source_revision:inv.source_revision,source_changed:inv.source_revision!==latest.source_revision||latest.source_changed,undoRetainedQuestions:keys,sequence:1,savedSequence:0,conflict:true});S.dirty=true;}
+          render();focusDesk();showDeskError(error);
         }
+        throw error;
       }
       let summaryError;
       try{await state();}catch(error){summaryError=error;}
       if(!current())return;
+      const originalEdits=inv.undoPending.edits||{};
       inv.undoPending=null;
-      // A queued input event must never become a saved claim or overwrite the
-      // restored server draft. Keep its old context for explicit comparison.
-      if(inv.sequence!==sequence||S.advancedDirty){
-        inv.conflict=true;inv.error='Last save undone. Newer input is retained here but is not saved. Compare latest saved work before keeping it.';S.dirty=true;
-        showDeskError(new Error(inv.error));return;
-      }
+      // Current work comes from this snapshot, never a historical receipt draft.
+      const retained=inv.sequence!==sequence||S.advancedDirty;
+      const retainedQuestions=[];
+      const edits=copy(latest.draft?.questions||{}),localSequence=inv.sequence,advancedDirty=S.advancedDirty,advancedInput=inv.advancedInput;
+      for(const [key,value] of Object.entries(inv.edits))if(JSON.stringify(value)!==JSON.stringify(originalEdits[key])){edits[key]=copy(value);retainedQuestions.push(key);}
       inv.undoRestored=true;
       S.detail=latest.business;setupInvestigation(latest);
+      S.advancedDirty=advancedDirty;S.investigation.advancedInput=advancedInput;
+      if(retained){
+        Object.assign(S.investigation,{undoPending:null,undoRetainedQuestions:retainedQuestions,edits,source_revision:inv.source_revision,source_changed:inv.source_revision!==latest.source_revision||latest.source_changed,sequence:localSequence+1,savedSequence:0,conflict:true,error:'Last save undone. Newer input is retained here but is not saved. Compare latest saved work before keeping it.'});
+        S.dirty=true;render();focusDesk();showDeskError(new Error(S.investigation.error));return;
+      }
       render();focusDesk();
       notice(summaryError?'Last save undone and restored draft saved. Workspace summary could not refresh: '+summaryError.message:'Last save undone. Previous decisions and retained unfinished work are shown separately; history and durable exclusions remain.',Boolean(summaryError));
     }catch(error){

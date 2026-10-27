@@ -27,9 +27,9 @@ function harness(){
   const nodes=new Map(),calls=[],events={},root=new Element('div');
   const document={createElement:t=>new Element(t),createTextNode:t=>Object.assign(new Element('text'),{textContent:t}),querySelector:s=>{if(!nodes.has(s))nodes.set(s,new Element('div'));const n=nodes.get(s);n.content='token';return n;},querySelectorAll:s=>s.includes('.investigation')?root.querySelectorAll():[]};
   const snapshot={business:{id:1,name:'Fictional Paint',review:{},reviews:[],observations:[],excluded_reasons:[]},review_revision:1,draft_revision:0,source_revision:'source',can_review:true,draft:null,questions:{website:copy(answer)},latest_session:{session_id:'session-1',can_undo:true,undone:false}};
-  const server={snapshot,override:null},response=v=>({ok:true,status:200,json:async()=>copy(v)});
+  const server={snapshot,override:null},response=v=>({ok:true,status:200,json:async()=>copy(v?.business&&!v.undo_outcome?{...v,undo_outcome:{session_id:v.latest_session?.session_id,found:true,undone:v.latest_session?.undone,can_undo:v.latest_session?.can_undo,undo_result:v.latest_session?.undo_result??null}}:v)});
   function applyUndo(){snapshot.review_revision++;snapshot.draft_revision++;snapshot.latest_session={session_id:'session-1',can_undo:false,undone:true};snapshot.draft={mode:'workspace',step:1,questions:{website:copy(answer)}};}
-  const fetch=async(route,opts)=>{const body=opts.body?JSON.parse(opts.body):undefined;calls.push({route,body});if(server.override){const v=server.override(route,body);if(v)return v;}if(route.endsWith('/undo')){assert.equal(snapshot.latest_session.undone,false,'No duplicate Undo');applyUndo();return response({});}if(route.endsWith('/investigation'))return response(snapshot);if(route==='/api/state')return response({counts:{},version:'fixture'});if(route.endsWith('/draft')){snapshot.draft=copy(body.draft);snapshot.draft_revision++;return response(snapshot);}return response({records:[],matching_ids:[],total:0,facets:{}});};
+  const fetch=async(route,opts)=>{const body=opts.body?JSON.parse(opts.body):undefined;calls.push({route,body});if(server.override){const v=server.override(route,body);if(v)return v;}if(route.endsWith('/undo')){assert.equal(snapshot.latest_session.undone,false,'No duplicate Undo');applyUndo();return response({});}if(route.split('?')[0].endsWith('/investigation'))return response(snapshot);if(route==='/api/state')return response({counts:{},version:'fixture'});if(route.endsWith('/draft')){snapshot.draft=copy(body.draft);snapshot.draft_revision++;return response(snapshot);}return response({records:[],matching_ids:[],total:0,facets:{}});};
   const context={document,window:{addEventListener:(k,fn)=>events[k]=fn},fetch,Node:Element,URL,URLSearchParams,crypto,setTimeout:()=>1,clearTimeout(){},queueMicrotask(){},console};
   vm.createContext(context);
   let source=fs.readFileSync(path.join(testDirectory,'../prospect/web/app.js'),'utf8');
@@ -113,7 +113,7 @@ test('ineligible held preview has no confirm and invents no previous evidence',a
   const h=feature();h.preview.eligible=false;h.preview.reason='Contact exclusion';h.preview.before_context_unknown=true;h.preview.before_saved_answers=null;await h.ui.openUndoPreview();assert.match(text(h.ui.S.investigation.undoArea),/Contact exclusion/);assert.equal(descendants(h.ui.S.investigation.undoArea).some(n=>n.textContent==='Confirm Undo'),false);assert.equal(h.calls.some(c=>c.body),false);
 });
 test('lost Undo response plus failed snapshot retains unrelated drafts and recovers by GET only',async()=>{
-  const h=feature({fit});await h.ui.openUndoPreview();h.server.override=r=>{if(r.endsWith('/undo')){h.undo();return Promise.reject(Error('Lost response'));}if(r.endsWith('/investigation'))return Promise.reject(Error('Read failed'));return null;};
+  const h=feature({fit});await h.ui.openUndoPreview();h.server.override=r=>{if(r.endsWith('/undo')){h.undo();return Promise.reject(Error('Lost response'));}if(r.split('?')[0].endsWith('/investigation'))return Promise.reject(Error('Read failed'));return null;};
   await assert.rejects(h.ui.undoInvestigation(),/not confirmed/);assert.equal(h.ui.S.investigation.edits.fit.notes,fit.notes);assert.equal(h.ui.S.dirty,true);
   h.server.override=null;await h.ui.undoInvestigation();assert.equal(mutations(h).length,1);assert.equal(writes(h).length,0);assert.equal(h.ui.S.investigation.edits.fit.notes,fit.notes);assert.equal(h.ui.S.investigation.edits.website.notes,answer.notes);
 });
@@ -136,7 +136,7 @@ test('result labels stored context flags at Undo time separately from present co
 });
 
 test('closing preview after an ambiguous committed Undo preserves warning and read-only recovery',async()=>{
-  const h=feature({fit});await h.ui.openUndoPreview();h.server.override=r=>{if(r.endsWith('/undo')){h.undo();return Promise.reject(Error('Lost response'));}if(r.endsWith('/investigation'))return Promise.reject(Error('Read failed'));return null;};
+  const h=feature({fit});await h.ui.openUndoPreview();h.server.override=r=>{if(r.endsWith('/undo')){h.undo();return Promise.reject(Error('Lost response'));}if(r.split('?')[0].endsWith('/investigation'))return Promise.reject(Error('Read failed'));return null;};
   await assert.rejects(h.ui.undoInvestigation(),/not confirmed/);const inv=h.ui.S.investigation,pending=inv.undoPending;
   assert.ok(find(inv.undoArea,'Check Undo outcome'));assert.equal(descendants(inv.undoArea).some(n=>n.textContent==='Confirm Undo'),false);
   let focused=false;inv.undoTrigger={focus(){focused=true;}};await click(find(inv.undoArea,'Cancel preview'));

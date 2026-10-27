@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 — 2026-10-27
+
+- Track the exact previewed Undo operation and recover its recorded outcome even after a newer save.
+- Keep current drafts and local typing intact while resolving uncertain outcomes; historical receipts never replace newer saved work.
+
 ## 0.8.0 — 2026-10-27
 
 - Preview the latest eligible Undo without changing saved work, including restored decisions, evidence context and unfinished questions.
