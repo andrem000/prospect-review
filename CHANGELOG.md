@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (unreleased)
+## 0.8.0 — 2026-10-27
 
 - Preview the latest eligible Undo without changing saved work, including restored decisions, evidence context and unfinished questions.
 - Keep unrelated drafts and explicitly retain newer overlapping input while undoing one save.

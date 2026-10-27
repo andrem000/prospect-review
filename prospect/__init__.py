@@ -1,2 +1,2 @@
 """Local evidence review for US service-business listings."""
-__version__ = "0.8.0.dev0"
+__version__ = "0.8.0"
