@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 (unreleased)
+
+- Inspect saved decision history for one business, with proven session grouping, corrections and linked Undo events.
+- Compare historical answers and evidence without changing current decisions, drafts or acknowledgements; keep unknown origin and evidence explicit.
+
 ## 0.8.1 — 2026-10-27
 
 - Track the exact previewed Undo operation and recover its recorded outcome even after a newer save.

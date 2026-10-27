@@ -20,7 +20,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import core, evidence, investigation, research, __version__
+from . import core, evidence, history, investigation, research, __version__
 from . import inbox
 from .providers import ADAPTERS
 
@@ -400,6 +400,13 @@ class Application:
             if method == 'POST' and rid:
                 return research.dismiss(db, bid, rid, data, business)
             raise LookupError('Route not found')
+        history_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/history', path)
+        if history_route:
+            if method != 'GET':
+                raise LookupError('Route not found')
+            options = history.parameters(query)
+            with closing(_memory(db)) as snapshot:
+                return history.read(snapshot, int(history_route[1]), options)
         investigation_route = re.fullmatch(r'/api/businesses/([1-9][0-9]*)/(investigation(?:/undo(?:-preview)?)?|draft)', path)
         if investigation_route:
             bid, operation = int(investigation_route[1]), investigation_route[2]
@@ -612,7 +619,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply(200, (app.root / 'exports' / download[1] / 'bundle.zip').read_bytes(), 'application/zip', entry['filename'])
                     # Preserve empty outcome values so the route can reject them;
                     # other endpoints retain their existing query semantics.
-                    outcome_query = method == 'GET' and re.fullmatch(r'/api/businesses/[1-9][0-9]*/investigation', path)
+                    outcome_query = method == 'GET' and re.fullmatch(r'/api/businesses/[1-9][0-9]*/(?:investigation|history)', path)
                     query = parse_qs(parsed.query, max_num_fields=30, keep_blank_values=bool(outcome_query))
                     result = app.dispatch(method, path, query, data, db)
                 return self.reply(200, _json(result))

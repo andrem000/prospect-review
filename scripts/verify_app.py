@@ -8,6 +8,7 @@ from contextlib import closing
 import tempfile
 import threading
 import zipfile
+from urllib.parse import quote
 
 from prospect.app import create_server
 
@@ -288,6 +289,26 @@ def verify():
             assert not held_outcome['can_review']
             assert held_outcome['undo_outcome']['undone']
             assert held_outcome['draft'] == outcome['draft']
+            # History inspects saved events under a hold without changing work.
+            before_history = persisted_review_state()
+            history = request(base + '/history?limit=2')
+            assert history['business_id'] == record['id'] and history['total'] > 2
+            assert len(history['items']) == 2 and history['has_more']
+            all_history = request(base + '/history?limit=50')
+            events = all_history['items']
+            assert [event['last_revision'] for event in events] == sorted(
+                [event['last_revision'] for event in events], reverse=True)
+            assert any(event['kind'] == 'investigation_save' and len(event['asserted_questions']) == 2
+                       for event in events)
+            assert any(event['origin'] == 'unknown' for event in events)
+            undo_event = next(event for event in events if event['kind'] == 'undo' and event['original_event_id'])
+            original = request(base + '/history?event_id=' + quote(undo_event['original_event_id'], safe=''))
+            assert len(original['items']) == 1 and original['items'][0]['id'] == undo_event['original_event_id']
+            assert original['items'][0]['kind'] == 'investigation_save'
+            filtered = request(base + '/history?question=website&limit=1')
+            assert filtered['question'] == 'website' and len(filtered['items']) <= 1
+            assert persisted_review_state() == before_history
+            assert request(outcome_path)['draft'] == held_outcome['draft']
             return {'installed_app_http': True, 'bundled_web_assets': True,
                     'app_demo_review_filtered_export': True,
                     'installed_investigation_draft_restart': True,
@@ -308,7 +329,10 @@ def verify():
                     'installed_undo_preserves_unrelated_context': True,
                     'installed_undo_result_restart': True,
                     'installed_undo_outcome_after_newer_session': True,
-                    'installed_undo_outcome_read_only_and_held': True}
+                    'installed_undo_outcome_read_only_and_held': True,
+                    'installed_history_read_only': True,
+                    'installed_history_grouped_and_unknown': True,
+                    'installed_history_original_link': True}
         finally:
             server.shutdown()
             server.server_close()

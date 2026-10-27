@@ -62,6 +62,14 @@ A later website correction preserves other decisions. Previously recorded activi
 
 The default app profile covers all supported US states, using the bundled trade rules. Settings let you adjust geography, trade groups and freshness. Qualification reflects those settings and recorded evidence; it is not contact permission. The app sends no messages.
 
+## Saved decision history
+
+Expand **Saved decision history** in the Investigation desk to inspect saved checks, corrections and Undo events. The list follows stored insertion order, newest first. Filter by question and page through longer histories. Generic records with unrecorded question attribution remain visible with an uncertainty label. Repeated checks with the same answer remain visible.
+
+Expand an event to compare previous and resulting saved answers and their known or unknown evidence bases. Recording time is separate from evidence observation dates. Guided questions are grouped only when stored session metadata proves the association. Generic corrections are not labeled as CLI or browser work when their origin was not recorded. Record-level evidence is not automatically evidence for a carried question.
+
+Undo events can open their original save when it is known. Older receipts describe the operation at its recording time; they are not the current answer or unfinished draft. History adds no rollback controls. Current effective answers, draft comparisons, source warnings and latest eligible Undo remain separate. Opening, filtering, paging, expanding and following an original-save link do not write reviews, drafts or Changes acknowledgements. Raw historical records remain available as supporting detail.
+
 ## Research assistance
 
 Open the research area beside the identity or website evidence. Supply a public website URL and explicitly confirm that you may retain its evidence. Checking the URL sends a request to that site from your machine; the business record, app session token and imported file are not sent. There is no paid API or account to configure.

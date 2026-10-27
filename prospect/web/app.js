@@ -543,6 +543,7 @@
       if(inv.undoPreview)renderUndoPreview(inv,preview);
     }
     if(inv.latest_session?.undone&&inv.latest_session.undo_result)append(desk,undoResultSummary(inv.latest_session.undo_result));
+    append(desk,renderDecisionHistory(b));
     const advanced=el('details','advanced-review');
     append(advanced,el('summary','','Advanced review & full history'));
     if(!inv.can_review&&S.advancedDirty&&inv.advancedInput)append(advanced,el('p','callout warning','Unsaved advanced edits retained read-only. Contact exclusion prevents saving these values.'),jsonDetails('Your retained advanced input',inv.advancedInput.values));
@@ -551,6 +552,146 @@
     append(desk,advanced);
     queueMicrotask(()=>{draftStatus();if(inv.error)showDeskError(new Error(inv.error));});
     return desk;
+  }
+
+  function historyAnswerCard(title,key,saved) {
+    if(!saved)return append(el('article','comparison-card'),el('h5','',title),el('p','small','Unchecked · no saved answer in this snapshot.'));
+    const card=append(el('article','comparison-card'),el('h5','',title),answerDefinition(saved.answers||{},key),el('p','small',saved.basis_known?'Evidence association known':'Evidence basis unknown'));
+    if(saved.basis_known)append(card,el('p','small',knownObservationDate(saved.evidence_observed_at)?`Evidence observed: ${saved.evidence_observed_at}`:'Evidence observation date: unknown'),saved.evidence_url?link(saved.evidence_url,'Checked evidence ↗'):el('p','small','Checked evidence URL: unknown'),el('p','evidence-notes',saved.notes||'Checked evidence notes: unknown'));
+    else append(card,el('p','small','No evidence or observation date can be reliably associated with this answer.'));
+    return card;
+  }
+
+  function historyEvent(inv,h,event,original=false) {
+    const title=event.kind==='undo'?'Undo of saved decisions':event.kind==='investigation_save'?'Investigation save':'Saved review';
+    const details=el('details','history-event');details.dataset.historyEvent=event.id;
+    append(details,el('summary','',`${title} · Recorded ${dateText(event.recorded_at)}`));
+    let expanded=false;
+    details.addEventListener('toggle',()=>{
+      if(!details.open||expanded)return;expanded=true;
+      const body=el('div','history-event-body');
+      append(body,el('p','small',event.origin==='guided'?'Investigation session recorded':'Origin not recorded'),el('p','small',`Recorded: ${dateText(event.recorded_at)}${event.recorded_until&&event.recorded_until!==event.recorded_at?' through '+dateText(event.recorded_until):''}.`),el('p','small',`Stored review order: ${event.first_revision}${event.last_revision!==event.first_revision?'–'+event.last_revision:''}.`));
+      if(event.matches_filter==='unknown')append(body,el('p','callout warning','Question association is unknown; this event is included conservatively in the selected filter.'));
+      if(event.association_unknown)append(body,el('p','small','Some question or evidence associations are not recorded. Record evidence below is not assigned to a question by inference.'));
+      const questions=questionOrder.filter(key=>(event.asserted_questions||[]).includes(key)||(event.changed_questions||[]).includes(key)||key in (event.before||{})||key in (event.after||{}));
+      for(const key of questions){
+        append(body,el('h4','section-gap',questionLabels[key]));
+        const before=event.before?.[key],after=event.after?.[key],basis=value=>value?{basis_known:value.basis_known,evidence_url:value.evidence_url,notes:value.notes,evidence_observed_at:value.evidence_observed_at}:null;
+        if(!(event.changed_questions||[]).includes(key)&&JSON.stringify(basis(before))!==JSON.stringify(basis(after)))append(body,el('p','small','Saved value unchanged · evidence basis changed.'));
+        else if((event.asserted_questions||[]).includes(key)&&!(event.changed_questions||[]).includes(key))append(body,el('p','small','Recorded check · no effective answer change.'));
+        append(body,append(el('div','comparison-grid'),historyAnswerCard('Before this event',key,event.before?.[key]),historyAnswerCard('After this event',key,event.after?.[key])));
+      }
+      if(!questions.length)append(body,el('p','small','No question-level before/after association is recorded for this event.'));
+      for(const change of event.other_changes||[])append(body,el('p','small',`${change.field==='queue_hold'?'Hold':'Disposition'}: ${human(change.before)} → ${human(change.after)}.`));
+      if(event.record_evidence?.length){
+        if(event.kind==='undo')append(body,el('p','small','Evidence on an Undo record may be inherited metadata. It does not establish a new evidence check.'));
+        append(body,el('h4','section-gap','Evidence attached to review records'),el('p','small','Record evidence is separate from the before/after answer basis; association with a question may be unknown.'));
+        for(const evidence of event.record_evidence)append(body,append(el('article','history-record-evidence'),el('p','small',evidence.association_known&&questionLabels[evidence.question]?`Recorded question association: ${questionLabels[evidence.question]}`:'Record question association: unknown'),el('p','small',`Review record ${evidence.review_id} · Evidence observed: ${knownObservationDate(evidence.evidence_observed_at)?evidence.evidence_observed_at:'unknown'}`),evidence.evidence_url?link(evidence.evidence_url,'Recorded evidence ↗'):el('p','small','Evidence URL: not recorded'),el('p','evidence-notes',evidence.notes||'Evidence notes: not recorded')));
+      }
+      if(event.kind==='undo'){
+        append(body,el('p','callout','Historical Undo event. Its result describes work at that time, separately from current saved answers and unfinished drafts.'));
+        if(event.undo_result)append(body,undoResultSummary(event.undo_result));
+        else append(body,el('p','small','Historical Undo summary: not recorded.'));
+        if(event.original_event_id&&!original)append(body,button('Inspect original save',()=>loadHistoryOriginal(inv,h,event.original_event_id)));
+        else if(!event.original_event_id)append(body,el('p','small','Original save association: not recorded.'));
+      }
+      append(details,body);
+    });
+    return details;
+  }
+
+  function historyCurrent(inv,h) {
+    return S.investigation===inv&&S.detail?.id===h.businessId&&inv.history===h;
+  }
+
+  function renderHistoryOriginal(inv,h) {
+    const box=h.originalArea,selected=h.original;if(!box)return;box.replaceChildren();if(!selected)return;
+    append(box,el('h4','','Original saved event'),el('p','small','Historical inspection only. Current answers and drafts are unchanged.'));
+    if(selected.loading)append(box,el('p','small','Loading original save…'));
+    else if(selected.error)append(box,el('p','inline-error',selected.error),button('Retry original save',()=>loadHistoryOriginal(inv,h,selected.id)));
+    else if(!selected.event)append(box,el('p','callout warning','The original save is not available in this business history. No association is inferred.'));
+    else {const event=historyEvent(inv,h,selected.event,true);append(box,event);event.open=true;}
+    append(box,button('Close original save',()=>{h.originalGeneration++;h.original=null;renderHistoryOriginal(inv,h);h.summary?.focus();}));
+  }
+
+  async function loadHistoryOriginal(inv,h,eventId) {
+    if(!historyCurrent(inv,h)||!h.open)return;
+    const generation=++h.originalGeneration,pageGeneration=h.generation;
+    h.original={id:eventId,loading:true};renderHistoryOriginal(inv,h);
+    try{
+      const data=await api(`/api/businesses/${h.businessId}/history?event_id=${encodeURIComponent(eventId)}`);
+      if(!historyCurrent(inv,h)||generation!==h.originalGeneration||pageGeneration!==h.generation||!h.open)return;
+      if(data.business_id!==h.businessId||data.selected_event_id!==eventId)throw new Error('The original save response does not match this business and event.');
+      h.original={id:eventId,event:data.items?.find(event=>event.id===eventId)||null,loading:false};
+      if(h.revision!==null&&data.history_revision!==undefined&&h.revision!==data.history_revision){h.revision=data.history_revision;h.message='Saved history changed. Showing the newest events again.';await loadDecisionHistory(inv,h,0,true);return;}
+    }catch(error){
+      if(!historyCurrent(inv,h)||generation!==h.originalGeneration||pageGeneration!==h.generation||!h.open)return;
+      h.original={id:eventId,error:error.message,loading:false};
+    }
+    renderHistoryOriginal(inv,h);h.originalArea?.focus();
+  }
+
+  function renderHistoryPage(inv,h) {
+    const area=h.results;area.replaceChildren();
+    if(h.loading){append(area,el('p','small','Loading saved decision history…'));return;}
+    if(h.error){append(area,el('p','inline-error',h.error),button('Retry history',()=>loadDecisionHistory(inv,h)));return;}
+    if(!h.data)return;
+    const data=h.data;
+    if(h.message)append(area,el('p','callout',h.message));
+    append(area,el('p','small',data.total?`Events ${data.offset+1}–${data.offset+data.items.length} of ${data.total}.`:'No saved decision history matches this filter.'));
+    for(const event of data.items)append(area,historyEvent(inv,h,event));
+    if(data.total){
+      const previous=button('Newer events',()=>loadDecisionHistory(inv,h,Math.max(0,h.offset-20),false,true)),next=button('Older events',()=>loadDecisionHistory(inv,h,h.offset+20,false,true));
+      previous.disabled=h.offset===0;next.disabled=!data.has_more;
+      append(area,append(el('div','actions history-pages'),previous,next));
+    }
+    h.originalArea=el('section','history-original');h.originalArea.setAttribute('aria-label','Original saved event');h.originalArea.tabIndex=-1;append(area,h.originalArea);renderHistoryOriginal(inv,h);
+  }
+
+  async function loadDecisionHistory(inv,h,offset=h.offset,keepOriginal=false,focusResults=false) {
+    if(!historyCurrent(inv,h)||!h.open)return;
+    const generation=++h.generation,question=h.question;
+    h.offset=offset;h.loading=true;h.error=null;h.data=null;h.originalGeneration++;if(!keepOriginal)h.original=null;renderHistoryPage(inv,h);
+    try{
+      const query=new URLSearchParams({question,offset:String(offset),limit:'20'});
+      const data=await api(`/api/businesses/${h.businessId}/history?${query}`);
+      if(!historyCurrent(inv,h)||generation!==h.generation||!h.open)return;
+      if(data.business_id!==h.businessId||data.question!==question||data.offset!==offset||data.limit!==20||!Array.isArray(data.items))throw new Error('The saved history response does not match this view. Retry history.');
+      if(h.revision!==null&&h.revision!==data.history_revision){
+        h.message='Saved history changed. Showing the newest events again.';
+        h.revision=data.history_revision;
+        if(offset!==0){h.loading=false;return loadDecisionHistory(inv,h,0,keepOriginal,focusResults);}
+      }
+      h.revision=data.history_revision;h.data=data;h.loading=false;
+    }catch(error){
+      if(!historyCurrent(inv,h)||generation!==h.generation||!h.open)return;
+      h.error=error.message;h.loading=false;
+    }
+    renderHistoryPage(inv,h);if(focusResults)h.results.focus();
+  }
+
+  function renderDecisionHistory(b) {
+    const inv=S.investigation;
+    const h=inv.history||(inv.history={businessId:b.id,question:'all',offset:0,revision:null,data:null,error:null,loading:false,open:false,generation:0,originalGeneration:0,original:null});
+    const details=el('details','decision-history');h.root=details;details.open=h.open;
+    const summary=el('summary','','Saved decision history');h.summary=summary;append(details,summary);
+    const intro=el('p','small','Read-only saved events, newest first. Recorded time is separate from evidence observation date. Historical answers and Undo results are separate from current answers and unfinished drafts.');
+    const question=select([['all','All questions'],...questionOrder.map(key=>[key,questionLabels[key]])],h.question);
+    question.addEventListener('change',()=>{
+      if(!historyCurrent(inv,h)||h.root!==details)return;
+      h.question=question.value;h.offset=0;h.message=null;loadDecisionHistory(inv,h,0);
+    });
+    const refresh=button('Refresh history',()=>{if(historyCurrent(inv,h)&&h.root===details){h.message=null;return loadDecisionHistory(inv,h);}});
+    const controls=append(el('div','history-controls'),field('History question',question),refresh);
+    h.results=el('div','history-results');h.results.setAttribute('aria-live','polite');h.results.setAttribute('aria-label','Saved history events');h.results.tabIndex=-1;
+    append(details,intro,controls,h.results);renderHistoryPage(inv,h);
+    details.addEventListener('toggle',()=>{
+      if(!historyCurrent(inv,h)||h.root!==details)return;
+      h.open=details.open;
+      if(!h.open){h.generation++;h.originalGeneration++;h.loading=false;if(h.original?.loading)h.original=null;renderHistoryPage(inv,h);return;}
+      if(!h.data&&!h.loading)loadDecisionHistory(inv,h);
+    });
+    return details;
   }
 
   function refreshEvidenceModel(inv,latest) {

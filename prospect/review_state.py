@@ -19,9 +19,14 @@ def answers(review, question):
     return {field: review.get(field, core.REVIEW_DEFAULTS.get(field)) for field in FIELDS[question]}
 
 
-def resolve(business):
-    bases, reviewed, previous, before_sessions = {}, set(), {}, {}
-    for row in business.get('reviews', []):
+class Replay:
+    """Incremental version of the existing read model; never writes stored rows."""
+    def __init__(self):
+        self.bases, self.reviewed, self.previous, self.before_sessions = {}, set(), {}, {}
+
+    def advance(self, row):
+        bases, reviewed = self.bases, self.reviewed
+        previous, before_sessions = self.previous, self.before_sessions
         undo = row.get('investigation_undo')
         # Compensating records may carry older question metadata verbatim;
         # they restore state rather than asserting that question again.
@@ -51,22 +56,38 @@ def resolve(business):
             bases[question] = {key: row.get(key, core.REVIEW_DEFAULTS.get(key))
                                for key in (*FIELDS[question], *EVIDENCE)}
             reviewed.add(question)
-        previous = row
-    effective = business['review']
-    # Only newly recorded assertion metadata can establish a default-valued
-    # activity check; legacy generic evidence cannot prove it was supplied.
-    if effective.get('activity_asserted') is True:
-        reviewed.add('activity')
-    if 'activity' in reviewed and all(f in effective for f in core.ACTIVITY_EVIDENCE_FIELDS):
-        bases['activity'] = dict(activity=effective.get('activity'),
-            evidence_observed_at=effective['activity_evidence_observed_at'],
-            evidence_url=effective['activity_evidence_url'], notes=effective['activity_evidence_notes'])
-    return reviewed, bases
+        self.bases, self.reviewed, self.previous = bases, reviewed, row
+
+    def resolved(self, effective):
+        bases, reviewed = dict(self.bases), set(self.reviewed)
+        # Only newly recorded assertion metadata can establish a default-valued
+        # activity check; legacy generic evidence cannot prove it was supplied.
+        if effective.get('activity_asserted') is True:
+            reviewed.add('activity')
+        if 'activity' in reviewed and all(f in effective for f in core.ACTIVITY_EVIDENCE_FIELDS):
+            bases['activity'] = dict(activity=effective.get('activity'),
+                evidence_observed_at=effective['activity_evidence_observed_at'],
+                evidence_url=effective['activity_evidence_url'], notes=effective['activity_evidence_notes'])
+        return reviewed, bases
+
+    def saved(self, effective=None):
+        effective = self.previous if effective is None else effective
+        return _saved(effective, *self.resolved(effective))
+
+
+def resolve(business):
+    replay = Replay()
+    for row in business.get('reviews', []):
+        replay.advance(row)
+    return replay.resolved(business['review'])
 
 
 def saved_answers(business):
-    reviewed, bases = resolve(business)
-    return {q: dict(answers=answers(business['review'], q),
+    return _saved(business['review'], *resolve(business))
+
+
+def _saved(effective, reviewed, bases):
+    return {q: dict(answers=answers(effective, q),
                     **{key: (bases.get(q) or {}).get(key) for key in EVIDENCE}, basis_known=q in bases)
             for q in FIELDS if q in reviewed}
 

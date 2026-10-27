@@ -26,6 +26,8 @@ The **Unfinished work** view helps you find saved question drafts after an inter
 
 **Preview Undo** shows the latest eligible save, the decisions it will restore and the unfinished questions it will keep. Confirm overlapping drafts explicitly to retain newer input. Preview and cancellation leave saved work unchanged; changed review, draft or source context requires a new preview. Undo retains history and durable exclusions.
 
+**Saved decision history** explains recorded checks, corrections and Undo events for one business. Compare historical answers and evidence, filter by question or inspect an original save. Unknown origin and evidence stay explicit; opening history does not change current decisions or unfinished work.
+
 The app runs on your machine, with no accounts, external interface assets or runtime dependencies. Optional research assistance checks one public website link you supply, only when you request it. It shows captured evidence and matching or conflicting business details; you decide whether to use a proposed answer in a draft. You can also analyze a saved page offline. No automatic review or outreach follows.
 
 The server listens only on `127.0.0.1`; it is intended for a single local user. [The local app guide](docs/LOCAL-APP.md) covers the complete workflow, research limits and backups. The existing CLI remains available.
