@@ -292,6 +292,7 @@ REVIEW_DEFAULTS = dict(website_status='unreviewed', verified_website='', candida
                        service_fit='unknown', delivery='unknown', disposition='pending',
                        queue_hold=False, evidence_observed_at=None, identity_status='unknown')
 ACTIVITY_EVIDENCE_FIELDS = ('activity_evidence_observed_at', 'activity_evidence_url', 'activity_evidence_notes')
+CORRECTION_FIELDS = frozenset(REVIEW_DEFAULTS) | {'evidence_url', 'notes'}
 
 
 @contextmanager
@@ -322,12 +323,16 @@ def _review_transaction(db):
         raise
 
 
-def review(db, bid, data, replace=False):
+def review(db, bid, data, replace=False, *, recording_route=None):
     """Append an effective decision, preserving omitted fields without re-dating evidence."""
+    if recording_route not in (None, 'cli', 'advanced'):
+        raise ValueError('Unsupported review recording route')
     with _review_transaction(db):
         if not db.execute('SELECT 1 FROM businesses WHERE id=?', (bid,)).fetchone():
             raise ValueError('Unknown business ID')
         supplied = dict(data)
+        # Caller-supplied claims are never a trusted insertion envelope.
+        supplied.pop('correction_provenance', None)
         supplied.pop('created_at', None)  # Recording metadata belongs to this insertion.
         if 'evidence_observed_at' in supplied and supplied['evidence_observed_at'] is not None:
             value = supplied['evidence_observed_at']
@@ -343,6 +348,9 @@ def review(db, bid, data, replace=False):
             # Carry decisions, not insertion metadata or snapshot-origin claims.
             effective.update({k: previous[k] for k in REVIEW_DEFAULTS if k in previous})
         effective.update(supplied)
+        if recording_route is not None:
+            effective['correction_provenance'] = dict(version=1, route=recording_route,
+                mode='replace' if replace else 'merge', supplied_fields=sorted(set(supplied) & CORRECTION_FIELDS))
         if not public_url(effective.get('evidence_url')) or not str(effective.get('notes') or '').strip():
             raise ValueError('Review requires an HTTP(S) evidence URL and nonempty notes')
         if effective['website_status'] not in WEBSITE_STATUSES:

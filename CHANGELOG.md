@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0 (unreleased)
+
+- Record the known entry route, merge/replace mode and explicit supplied fields for new CLI and advanced corrections.
+- Explain correction provenance separately from effective changes and verified evidence, with precise new-record filtering and conservative legacy unknowns.
+
 ## 0.9.0 — 2026-10-28
 
 - Inspect saved decision history for one business, with proven session grouping, corrections and linked Undo events.

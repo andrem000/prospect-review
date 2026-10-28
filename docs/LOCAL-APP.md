@@ -70,6 +70,10 @@ Expand an event to compare previous and resulting saved answers and their known 
 
 Undo events can open their original save when it is known. Older receipts describe the operation at its recording time; they are not the current answer or unfinished draft. History adds no rollback controls. Current effective answers, draft comparisons, source warnings and latest eligible Undo remain separate. Opening, filtering, paging, expanding and following an original-save link do not write reviews, drafts or Changes acknowledgements. Raw historical records remain available as supporting detail.
 
+New CLI and Advanced review corrections record where they were entered, whether they merged with current work or replaced omitted decisions with defaults, and which fields were explicitly supplied. History separates these supplied fields from changes to effective answers. A same-value submission can therefore be relevant to its question even when its answer did not change. Known notes/evidence-only corrections remain record-level updates; they do not imply that every carried question was checked.
+
+Question filters use recorded field attribution and actual answer/evidence-basis changes where known. Older records, unavailable entry routes and unsupported metadata remain explicitly unknown and are included conservatively. This does not backfill history or make generic evidence the basis for a carried answer. Undo events retain their own classification even when older metadata is present.
+
 ## Research assistance
 
 Open the research area beside the identity or website evidence. Supply a public website URL and explicitly confirm that you may retain its evidence. Checking the URL sends a request to that site from your machine; the business record, app session token and imported file are not sent. There is no paid API or account to configure.

@@ -43,10 +43,13 @@ def verify():
             queue = request('/api/businesses?limit=1')
             assert len(queue['records']) == 1 and len(queue['matching_ids']) > 1
             record = queue['records'][0]
-            request('/api/businesses/' + str(record['id']) + '/review', {'changes': {
+            initial_correction = request('/api/businesses/' + str(record['id']) + '/review', {'changes': {
                 'website_status': 'uncertain', 'evidence_observed_at': '2026-10-15',
                 'evidence_url': 'https://example.com/installed-app-test',
                 'notes': 'SIMULATED installed app check; no real business reviewed.'}})
+            assert initial_correction['review']['correction_provenance'] == dict(
+                version=1, route='advanced', mode='merge',
+                supplied_fields=['evidence_observed_at', 'evidence_url', 'notes', 'website_status'])
             assert request('/api/businesses/' + str(record['id']))['review_history_count'] == 1
             # Exercise the new module from the wheel, not the source checkout.
             base = '/api/businesses/' + str(record['id'])
@@ -300,7 +303,13 @@ def verify():
                 [event['last_revision'] for event in events], reverse=True)
             assert any(event['kind'] == 'investigation_save' and len(event['asserted_questions']) == 2
                        for event in events)
-            assert any(event['origin'] == 'unknown' for event in events)
+            first_correction = next(event for event in events if event['first_revision'] == 1)
+            assert first_correction['origin'] == 'advanced'
+            assert first_correction['correction_provenance'] == initial_correction['review']['correction_provenance']
+            assert first_correction['asserted_questions'] == []
+            activity_history = request(base + '/history?question=activity&limit=50')
+            assert first_correction['id'] not in {event['id'] for event in activity_history['items']}
+            assert all(event['correction_provenance'] is None for event in events if event['kind'] != 'saved_review')
             undo_event = next(event for event in events if event['kind'] == 'undo' and event['original_event_id'])
             original = request(base + '/history?event_id=' + quote(undo_event['original_event_id'], safe=''))
             assert len(original['items']) == 1 and original['items'][0]['id'] == undo_event['original_event_id']
@@ -331,8 +340,10 @@ def verify():
                     'installed_undo_outcome_after_newer_session': True,
                     'installed_undo_outcome_read_only_and_held': True,
                     'installed_history_read_only': True,
-                    'installed_history_grouped_and_unknown': True,
-                    'installed_history_original_link': True}
+                    'installed_history_grouped_and_provenance': True,
+                    'installed_history_original_link': True,
+                    'installed_correction_provenance_and_filters': True,
+                    'installed_undo_provenance_precedence': True}
         finally:
             server.shutdown()
             server.server_close()

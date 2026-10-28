@@ -10,6 +10,21 @@ SUMMARY_ARRAYS = ('restored_decisions', 'session_restored_questions', 'retained_
 SUMMARY_FLAGS = ('before_context_unknown', 'source_changed', 'review_changed', 'review_context_unknown')
 
 
+def correction_provenance(value):
+    """Fail closed for legacy, incomplete, malformed or future envelopes."""
+    if not isinstance(value, dict) or set(value) != {'version', 'route', 'mode', 'supplied_fields'}:
+        return None
+    if (type(value['version']) is not int or value['version'] != 1
+            or type(value['route']) is not str or value['route'] not in ('cli', 'advanced')
+            or type(value['mode']) is not str or value['mode'] not in ('merge', 'replace')):
+        return None
+    fields = value['supplied_fields']
+    if (not isinstance(fields, list) or any(type(f) is not str or f not in core.CORRECTION_FIELDS for f in fields)
+            or fields != sorted(set(fields))):
+        return None
+    return dict(value, supplied_fields=list(fields))
+
+
 def parameters(query):
     if set(query) - {'question', 'offset', 'limit', 'event_id'}:
         raise ValueError('Unsupported history query parameter')
@@ -106,17 +121,19 @@ def read(db, bid, options):
         original = originals.get(undo) if isinstance(undo, str) else None
         # Undo must win over inherited question/session metadata in its row.
         kind = 'undo' if undo else 'investigation_save' if sid else 'saved_review'
+        provenance = correction_provenance(last['data'].get('correction_provenance')) if kind == 'saved_review' else None
         asserted = [q for q in review_state.FIELDS if sid and q in json.loads(sessions[sid]['submitted'])]
         changed = [q for q in review_state.FIELDS
                    if (before.get(q) or {}).get('answers') != (after.get(q) or {}).get('answers')]
         event = dict(id='session:' + sid if sid else 'review:' + str(last['id']), kind=kind,
-                     origin='guided' if sid or original else 'unknown',
+                     origin='guided' if sid or original else provenance['route'] if provenance else 'unknown',
+                     correction_provenance=provenance,
                      review_ids=[r['id'] for r in members], first_revision=first['id'], last_revision=last['id'],
                      recorded_at=first['recorded_at'], recorded_until=last['recorded_at'], session_id=sid,
                      original_session_id=undo if isinstance(undo, str) else None,
                      original_event_id=original['id'] if original else None,
                      asserted_questions=asserted, changed_questions=changed,
-                     association_unknown=not bool(sid or original), matches_filter='known',
+                     association_unknown=not bool(sid or original or provenance), matches_filter='known',
                      before=before, after=after,
                      other_changes=[dict(field=key, before=previous.get(key, core.REVIEW_DEFAULTS[key]),
                                          after=last['data'].get(key, core.REVIEW_DEFAULTS[key]))
@@ -130,6 +147,9 @@ def read(db, bid, options):
         # are unchanged. Unknown generic assertion sets remain visible to filters.
         associated = set(asserted + changed + (original['asserted_questions'] if original else []))
         associated.update(q for q in review_state.FIELDS if before.get(q) != after.get(q))
+        if provenance:
+            associated.update(q for q, fields in review_state.FIELDS.items()
+                              if set(fields) & set(provenance['supplied_fields']))
         question = options['question']
         if question != 'all' and question not in associated:
             if event['association_unknown']:

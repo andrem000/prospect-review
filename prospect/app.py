@@ -463,7 +463,7 @@ class Application:
                     if 'review_revision' in data:
                         investigation.check_revisions(db, bid, data, with_draft=False)
                     investigation.check_source(db, bid, data)
-                    review = core.review(db, bid, changes, replace=data.get('replace', False))
+                    review = core.review(db, bid, changes, replace=data.get('replace', False), recording_route='advanced')
                 return {'reviewed': bid, 'review': review}
         if method == 'GET' and path == '/api/businesses':
             return self.listing(db, query)

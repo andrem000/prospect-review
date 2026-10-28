@@ -99,6 +99,8 @@ def main():
             '--notes', 'SIMULATED: possible website needs checking; no new activity check.')
         corrected = json.loads(run(cli, '--db', database, 'show', '1'))
         saved = corrected['review']
+        assert saved['correction_provenance'] == dict(version=1, route='cli', mode='merge',
+            supplied_fields=['candidate_website', 'evidence_observed_at', 'evidence_url', 'notes', 'website_status'])
         assert len(corrected['reviews']) == 2
         assert saved['ownership'] == 'independent' and saved['residential'] == 'yes'
         assert saved['activity'] == 'active' and saved['evidence_observed_at'] == '2026-10-16'
@@ -111,6 +113,7 @@ def main():
                           'demo_checks': summary['checks_passed'], 'existing_demo_preserved': True,
                           'documented_review_example': True, 'configured_freshness_changes_qualification': True,
                           'partial_correction_preserves_decisions_and_activity_date': True,
+                          'installed_cli_correction_provenance': True,
                           'runtime_dependencies': 0, **app_check}, indent=2))
 
 

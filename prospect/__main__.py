@@ -96,7 +96,7 @@ def main(argv=None):
                 result = core.suppress(db, a.file)
             elif a.command == 'review':
                 data = {k: v for k, v in vars(a).items() if k not in ('command', 'db', 'id', 'replace')}
-                saved = core.review(db, a.id, data, replace=getattr(a, 'replace', False))
+                saved = core.review(db, a.id, data, replace=getattr(a, 'replace', False), recording_route='cli')
                 result = {'reviewed': a.id, 'review': saved}
             elif a.command in ('search', 'export'):
                 config = json.loads(Path(a.config).read_text(encoding='utf-8-sig'))

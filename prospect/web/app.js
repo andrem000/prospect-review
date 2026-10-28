@@ -562,15 +562,48 @@
     return card;
   }
 
+  function historyCorrection(event) {
+    // Only supported generic correction envelopes describe a new entry route.
+    // Guided saves and Undo can carry older metadata and always take precedence.
+    const value=event.correction_provenance;
+    const fields=new Set([...Object.keys(answerLabels),'disposition','queue_hold']);
+    if(event.kind!=='saved_review'||!value||typeof value!=='object'||Array.isArray(value)||
+       Object.keys(value).sort().join(',')!=='mode,route,supplied_fields,version'||
+       value.version!==1||!['cli','advanced'].includes(value.route)||value.route!==event.origin||
+       !['merge','replace'].includes(value.mode)||!Array.isArray(value.supplied_fields)||
+       !value.supplied_fields.every(field=>typeof field==='string'&&fields.has(field))||
+       new Set(value.supplied_fields).size!==value.supplied_fields.length||
+       value.supplied_fields.some((field,index)=>index>0&&value.supplied_fields[index-1]>field))return null;
+    return value;
+  }
+
+  function historyCorrectionSummary(event,correction) {
+    const box=el('section','history-correction');
+    const labels={...answerLabels,evidence_url:'Evidence URL',notes:'Notes',disposition:'Disposition',queue_hold:'Hold'};
+    const decisionFields=new Set([...choiceFields,'verified_website','candidate_website']);
+    const supplied=correction.supplied_fields,decisions=supplied.filter(field=>decisionFields.has(field));
+    append(box,el('p','small',correction.mode==='merge'?'Merge correction · omitted fields retain their previous values.':'Replace correction · omitted fields use replacement defaults and may reset previous values.'),
+      el('p','small',`Explicitly supplied fields: ${supplied.length?supplied.map(field=>labels[field]).join(', '):'none'}.`));
+    if(decisions.length)append(box,el('p','small',`Declared decision fields: ${decisions.map(field=>labels[field]).join(', ')}. Supplied fields do not establish a human check or a question’s evidence basis.`));
+    else if(supplied.length&&supplied.every(field=>['notes','evidence_url','evidence_observed_at'].includes(field)))append(box,el('p','small','Notes/evidence-only submission · no decision fields explicitly supplied.'));
+    else append(box,el('p','small',supplied.length?'No decision fields explicitly supplied; record controls or metadata were supplied.':'No fields explicitly supplied.'));
+    const changed=questionOrder.filter(key=>(event.changed_questions||[]).includes(key));
+    append(box,el('p','small',`Effective answer value changes: ${changed.length?changed.map(key=>questionLabels[key]).join(', '):'none'}.`),
+      el('p','small','Generic record evidence remains separate; supplied fields do not associate it with a question.'));
+    return box;
+  }
+
   function historyEvent(inv,h,event,original=false) {
-    const title=event.kind==='undo'?'Undo of saved decisions':event.kind==='investigation_save'?'Investigation save':'Saved review';
+    const correction=historyCorrection(event),correctionTitle=correction?(correction.route==='cli'?'CLI correction':'Advanced review correction'):null;
+    const title=event.kind==='undo'?'Undo of saved decisions':event.kind==='investigation_save'?'Investigation save':correctionTitle||'Saved review';
     const details=el('details','history-event');details.dataset.historyEvent=event.id;
     append(details,el('summary','',`${title} · Recorded ${dateText(event.recorded_at)}`));
     let expanded=false;
     details.addEventListener('toggle',()=>{
       if(!details.open||expanded)return;expanded=true;
       const body=el('div','history-event-body');
-      append(body,el('p','small',event.origin==='guided'?'Investigation session recorded':'Origin not recorded'),el('p','small',`Recorded: ${dateText(event.recorded_at)}${event.recorded_until&&event.recorded_until!==event.recorded_at?' through '+dateText(event.recorded_until):''}.`),el('p','small',`Stored review order: ${event.first_revision}${event.last_revision!==event.first_revision?'–'+event.last_revision:''}.`));
+      append(body,el('p','small',correctionTitle||((event.kind==='investigation_save'||event.kind==='undo')&&event.origin==='guided'?'Investigation session recorded':'Origin not recorded')),el('p','small',`Recorded: ${dateText(event.recorded_at)}${event.recorded_until&&event.recorded_until!==event.recorded_at?' through '+dateText(event.recorded_until):''}.`),el('p','small',`Stored review order: ${event.first_revision}${event.last_revision!==event.first_revision?'–'+event.last_revision:''}.`));
+      if(correction)append(body,historyCorrectionSummary(event,correction));
       if(event.matches_filter==='unknown')append(body,el('p','callout warning','Question association is unknown; this event is included conservatively in the selected filter.'));
       if(event.association_unknown)append(body,el('p','small','Some question or evidence associations are not recorded. Record evidence below is not assigned to a question by inference.'));
       const questions=questionOrder.filter(key=>(event.asserted_questions||[]).includes(key)||(event.changed_questions||[]).includes(key)||key in (event.before||{})||key in (event.after||{}));
