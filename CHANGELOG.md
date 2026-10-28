@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0 — 2026-10-27
+## 0.9.0 — 2026-10-28
 
 - Inspect saved decision history for one business, with proven session grouping, corrections and linked Undo events.
 - Compare historical answers and evidence without changing current decisions, drafts or acknowledgements; keep unknown origin and evidence explicit.

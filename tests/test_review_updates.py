@@ -66,7 +66,8 @@ class ReviewUpdateTests(unittest.TestCase):
         self.initial()
         before = self.db.execute('SELECT * FROM reviews').fetchall()
         for value in ['', '2026-2-01', '2026-02-30', 'nonsense', '2026-01-01T12:00:00Z',
-                      (TODAY + timedelta(days=1)).isoformat()]:
+                      # Compute at execution, with a day margin if this test crosses midnight.
+                      (datetime.now(timezone.utc).date() + timedelta(days=2)).isoformat()]:
             with self.subTest(value=value):
                 code, _, _ = self.correction('--evidence-observed-at', value)
                 self.assertEqual(code, 2)
