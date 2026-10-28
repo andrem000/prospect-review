@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 (unreleased)
+## 0.10.0 — 2026-10-28
 
 - Record the known entry route, merge/replace mode and explicit supplied fields for new CLI and advanced corrections.
 - Explain correction provenance separately from effective changes and verified evidence, with precise new-record filtering and conservative legacy unknowns.
